@@ -13,6 +13,8 @@ public class JCudaDeviceQuery {
     public static final Logger logger = LogManager.getLogger();
 
     public static void main(String[] args) {
+        // enum_gpu.cu, hello_world.cu omitted
+
         // Initialize JCuda
         JCuda.cudaSetDevice(0);
 

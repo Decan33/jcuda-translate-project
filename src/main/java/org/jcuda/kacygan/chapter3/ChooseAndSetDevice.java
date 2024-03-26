@@ -10,7 +10,8 @@ import static jcuda.runtime.JCuda.cudaGetDevice;
 import static jcuda.runtime.JCuda.cudaSetDevice;
 
 public class ChooseAndSetDevice {
-    public static final Logger logger = LogManager.getLogger();
+    // set_gpu.cu
+    private static final Logger logger = LogManager.getLogger();
 
     public static void main(String[] args) {
         var dev = new int[1];
