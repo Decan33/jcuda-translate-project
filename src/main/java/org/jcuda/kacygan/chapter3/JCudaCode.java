@@ -8,12 +8,15 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import static jcuda.driver.JCudaDriver.cuMemAlloc;
 import static jcuda.driver.JCudaDriver.cuMemcpyHtoD;
 
 public class JCudaCode {
     private static final Logger logger = LogManager.getLogger();
+    private static final Random random = new Random();
+
     public static void printf(String formatString, Object... params) {
         logger.printf(Level.DEBUG, formatString, params);
     }
@@ -35,5 +38,11 @@ public class JCudaCode {
         deviceList.add(devC);
 
         return deviceList;
+    }
+
+    public static byte[] generateRandomBlock(int size) {
+        var data = new byte[size];
+        random.nextBytes(data);
+        return data;
     }
 }
