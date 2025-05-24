@@ -205,3 +205,7 @@ build/
 /triangle_signal_1024.png
 /VectorAdd
 /VectorAdd.ptx
+*.cu
+*.ptx
+*.py
+
