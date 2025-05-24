@@ -32,6 +32,7 @@ import static jcuda.driver.JCudaDriver.cuMemcpyDtoH;
 import static jcuda.driver.JCudaDriver.cuModuleGetFunction;
 import static jcuda.driver.JCudaDriver.cuModuleLoadData;
 
+@SuppressWarnings("java:S106")
 public class FourierCalculator {
     public static void main(String[] args) throws Exception {
         JCudaDriver.setExceptionsEnabled(true);
@@ -43,7 +44,6 @@ public class FourierCalculator {
         CUcontext context = new CUcontext();
         cuCtxCreate(context, 0, device);
 
-        // Kernel parameters
         float tmin = -3.0f;
         float tmax = 3.0f;
         int length = 65536 * 32;
@@ -93,13 +93,11 @@ public class FourierCalculator {
         cuEventElapsedTime(milliseconds, start, stop);
         System.out.printf("Kernel execution time: %3.1f ms%n", milliseconds[0]);
 
-        // Copy results from GPU to host
         float[] hostResults = new float[length];
         cuMemcpyDtoH(Pointer.to(hostResults), deviceResults, (long)length * Sizeof.FLOAT);
 
         String csvFile = "results_"+ coefficients + "coeffs.csv";
         try (PrintWriter writer = new PrintWriter(new FileWriter(csvFile))) {
-            // Optionally write header:
             writer.println("t,f");
 
             for (int i = 0; i < hostResults.length; i++) {
@@ -113,7 +111,6 @@ public class FourierCalculator {
             System.err.println("Error writing to CSV file: " + e.getMessage());
         }
 
-        // Cleanup resources
         cuMemFree(deviceResults);
         cuCtxDestroy(context);
     }

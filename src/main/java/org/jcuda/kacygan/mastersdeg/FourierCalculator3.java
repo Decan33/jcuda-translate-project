@@ -1,13 +1,42 @@
 package org.jcuda.kacygan.mastersdeg;
 
-import static jcuda.driver.JCudaDriver.*;
-import jcuda.*;
-import jcuda.driver.*;
-import java.io.*;
-import java.nio.file.*;
-import java.util.*;
+import static jcuda.driver.JCudaDriver.cuCtxCreate;
+import static jcuda.driver.JCudaDriver.cuCtxDestroy;
+import static jcuda.driver.JCudaDriver.cuDeviceGet;
+import static jcuda.driver.JCudaDriver.cuInit;
+import static jcuda.driver.JCudaDriver.cuLaunchKernel;
+import static jcuda.driver.JCudaDriver.cuMemAlloc;
+import static jcuda.driver.JCudaDriver.cuMemFree;
+import static jcuda.driver.JCudaDriver.cuMemcpyDtoHAsync;
+import static jcuda.driver.JCudaDriver.cuMemcpyHtoD;
+import static jcuda.driver.JCudaDriver.cuModuleGetFunction;
+import static jcuda.driver.JCudaDriver.cuModuleGetGlobal;
+import static jcuda.driver.JCudaDriver.cuModuleLoad;
+import static jcuda.driver.JCudaDriver.cuStreamCreate;
+import static jcuda.driver.JCudaDriver.cuStreamDestroy;
+import static jcuda.driver.JCudaDriver.cuStreamSynchronize;
 
+import jcuda.Pointer;
+import jcuda.Sizeof;
+import jcuda.driver.CUcontext;
+import jcuda.driver.CUdevice;
+import jcuda.driver.CUdeviceptr;
+import jcuda.driver.CUfunction;
+import jcuda.driver.CUmodule;
+import jcuda.driver.CUstream;
+import jcuda.driver.JCudaDriver;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Locale;
+
+@SuppressWarnings("java:S106")
 public class FourierCalculator3 {
+
+    public static final String PTX_FILENAME = "Fourier2.ptx";
+    public static final String FUNCTION_NAME = "fourier";
+
     public static void main(String[] args) {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
@@ -18,40 +47,35 @@ public class FourierCalculator3 {
         CUcontext context = new CUcontext();
         cuCtxCreate(context, 0, device);
 
-        // Parameters
         final int NUM_STREAMS = 4;
         final int threadsPerBlock = 256;
         final int length = 1024 * 64;
         final int coefficients = 1024;
 
-        float tmin = -3.0f;
-        float tmax = 3.0f;
-        float delta = (tmax - tmin) / (length - 1);
-        int chunkSize = length / NUM_STREAMS;
+        final float tmin = -3.0f;
+        final float tmax = 3.0f;
+        final float delta = (tmax - tmin) / (length - 1);
+        final int chunkSize = length / NUM_STREAMS;
 
-        float pi = 3.14159265f;
-        float piSq = pi * pi;
-        float T = 1.0f;
-        float piOverT = pi / T;
-        float resultCoeff = (4.0f * T) / piSq;
+        final float piSq = (float) (Math.PI * Math.PI);
+        final float period = 1.0f;
+        final float piOverT = (float) (Math.PI / period);
+        final float resultCoeff = (4.0f * period) / piSq;
 
-        // Load PTX
         CUmodule module = new CUmodule();
-        cuModuleLoad(module, "Fourier2.ptx");
+        cuModuleLoad(module, PTX_FILENAME);
 
         CUfunction function = new CUfunction();
-        cuModuleGetFunction(function, module, "fourier");
+        cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-        // Set constant memory (shared for all streams)
         setConstant(module, "const_delta", delta);
         setConstant(module, "const_coefficients", coefficients);
-        setConstant(module, "const_pi", pi);
+        setConstant(module, "const_pi", (float) Math.PI);
         setConstant(module, "const_pi_squared", piSq);
-        setConstant(module, "const_T", T);
+        setConstant(module, "const_T", period);
         setConstant(module, "const_pi_over_T", piOverT);
         setConstant(module, "constant_result_coefficient", resultCoeff);
 
-        // Allocate arrays
         CUstream[] streams = new CUstream[NUM_STREAMS];
         CUdeviceptr[] deviceChunks = new CUdeviceptr[NUM_STREAMS];
         float[][] hostChunks = new float[NUM_STREAMS][chunkSize];
@@ -64,12 +88,10 @@ public class FourierCalculator3 {
             cuMemAlloc(deviceChunks[i], chunkSize * Sizeof.FLOAT);
         }
 
-        // Launch per stream
         for (int i = 0; i < NUM_STREAMS; i++) {
             int offset = i * chunkSize;
             float tminChunk = tmin + offset * delta;
 
-            // Update const_tmin for each chunk
             setConstant(module, "const_tmin", tminChunk);
 
             Pointer kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
@@ -85,21 +107,17 @@ public class FourierCalculator3 {
                     chunkSize * Sizeof.FLOAT, streams[i]);
         }
 
-        // Wait for all streams
         for (CUstream stream : streams) {
             cuStreamSynchronize(stream);
         }
 
-        // Combine results
         float[] hostResults = new float[length];
         for (int i = 0; i < NUM_STREAMS; i++) {
             System.arraycopy(hostChunks[i], 0, hostResults, i * chunkSize, chunkSize);
         }
 
-        // Output to CSV
         writeResultsToCSV("result_stream_"+ (length > 300 ? "FIRST" : length) + ".csv", tmin, delta, hostResults);
 
-        // Cleanup
         for (int i = 0; i < NUM_STREAMS; i++) {
             cuMemFree(deviceChunks[i]);
             cuStreamDestroy(streams[i]);

@@ -28,7 +28,12 @@ import static jcuda.driver.JCudaDriver.cuModuleGetFunction;
 import static jcuda.driver.JCudaDriver.cuModuleGetGlobal;
 import static jcuda.driver.JCudaDriver.cuModuleLoad;
 
+@SuppressWarnings("java:S106")
 public class FourierCalculator2 {
+
+    public static final String FUNCTION_NAME = "fourier";
+    public static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
+
     public static void main(String[] args) {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
@@ -39,38 +44,30 @@ public class FourierCalculator2 {
         CUcontext context = new CUcontext();
         cuCtxCreate(context, 0, device);
 
-        float tmin = -3.0f;
-        float tmax = 3.0f;
-        int length = 256;
-        int coefficients = 1024;
+        final float tmin = -3.0f;
+        final float tmax = 3.0f;
+        final int length = 256;
+        final int coefficients = 1024;
 
-        float delta = (tmax - tmin) / (length - 1);
-        float pi = 3.14159265f;
-        float piSquared = pi * pi;
-        float T = 1.0f;
-        float piOverT = pi / T;
-        float resultCoefficient = (4.0f * T) / piSquared;
+        final float delta = (tmax - tmin) / (length - 1);
+        final float pi = 3.14159265f;
+        final float piSquared = pi * pi;
+        final float period = 1.0f;
+        final float piOverT = pi / period;
+        final float resultCoefficient = (4.0f * period) / piSquared;
 
-        // Device memory allocation
         CUdeviceptr dResults = new CUdeviceptr();
         cuMemAlloc(dResults, length * Sizeof.FLOAT);
 
         CUmodule module = new CUmodule();
-        cuModuleLoad(module, "Fourier2.ptx");
+        cuModuleLoad(module, KERNEL_PTX_FILENAME);
         CUfunction function = new CUfunction();
-        cuModuleGetFunction(function, module, "fourier");
+        cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-        setConstant(module, "const_tmin", tmin);
-        setConstant(module, "const_delta", delta);
-        setConstant(module, "const_coefficients", coefficients);
-        setConstant(module, "const_pi", pi);
-        setConstant(module, "const_pi_squared", piSquared);
-        setConstant(module, "const_T", T);
-        setConstant(module, "const_pi_over_T", piOverT);
-        setConstant(module, "constant_result_coefficient", resultCoefficient);
+        setAllConstantsInGpuMemory(tmin, coefficients, delta, pi, piSquared, period, piOverT, resultCoefficient, module);
 
-        int threadsPerBlock = 256;
-        int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
+        final int threadsPerBlock = 256;
+        final int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
 
         Pointer kernelParameters = Pointer.to(Pointer.to(dResults));
         cuLaunchKernel(function, blocks, 1,
@@ -82,12 +79,23 @@ public class FourierCalculator2 {
         float[] hostResults = new float[length];
         cuMemcpyDtoH(Pointer.to(hostResults), dResults, length * Sizeof.FLOAT);
 
-//        writeResultsToCSV("result_256.csv", tmin, delta, hostResults);
-
         cuMemFree(dResults);
         cuCtxDestroy(context);
 
+        writeResultsToCSV("results_" + coefficients + "coeffs_extended.csv", tmin, delta, hostResults);
+
         System.out.println("Computation and CSV export done successfully.");
+    }
+
+    private static void setAllConstantsInGpuMemory(float tmin, int coefficients, float delta, float pi, float piSquared, float period, float piOverT, float resultCoefficient, CUmodule module) {
+        setConstant(module, "const_tmin", tmin);
+        setConstant(module, "const_delta", delta);
+        setConstant(module, "const_coefficients", coefficients);
+        setConstant(module, "const_pi", pi);
+        setConstant(module, "const_pi_squared", piSquared);
+        setConstant(module, "const_T", period);
+        setConstant(module, "const_pi_over_T", piOverT);
+        setConstant(module, "constant_result_coefficient", resultCoefficient);
     }
 
     private static void setConstant(CUmodule module, String name, float value) {
