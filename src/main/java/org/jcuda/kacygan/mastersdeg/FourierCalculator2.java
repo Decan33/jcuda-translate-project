@@ -8,6 +8,7 @@ import jcuda.driver.CUdeviceptr;
 import jcuda.driver.CUfunction;
 import jcuda.driver.CUmodule;
 import jcuda.driver.JCudaDriver;
+import org.apache.commons.lang3.time.StopWatch;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -30,61 +31,109 @@ import static jcuda.driver.JCudaDriver.cuModuleLoad;
 
 @SuppressWarnings("java:S106")
 public class FourierCalculator2 {
-
+    static StopWatch watch = new StopWatch();
     public static final String FUNCTION_NAME = "fourier";
     public static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
+    public static int NUM_REPS = 1;
+
+
+    static double run() {
+        watch.start();
+        for (int rep = 0; rep < NUM_REPS; rep++) {
+            JCudaDriver.setExceptionsEnabled(true);
+            cuInit(0);
+
+            CUdevice device = new CUdevice();
+            cuDeviceGet(device, 0);
+
+            CUcontext context = new CUcontext();
+            cuCtxCreate(context, 0, device);
+
+            final float tmin = -3.0f;
+            final float tmax = 3.0f;
+
+//        int length = 200000000;
+//        int length = 500000000;
+//            int length = 1000000000;
+        int length = 2000000000;
+            final int coefficients = 1024;
+
+            final float delta = (tmax - tmin) / (length - 1);
+            final float pi = 3.14159265f;
+            final float piSquared = pi * pi;
+            final float period = 1.0f;
+            final float piOverT = pi / period;
+            final float resultCoefficient = (4.0f * period) / piSquared;
+
+            CUdeviceptr dResults = new CUdeviceptr();
+            cuMemAlloc(dResults, (long) length * Sizeof.FLOAT);
+
+            CUmodule module = new CUmodule();
+            cuModuleLoad(module, KERNEL_PTX_FILENAME);
+            CUfunction function = new CUfunction();
+            cuModuleGetFunction(function, module, FUNCTION_NAME);
+
+            setAllConstantsInGpuMemory(tmin, coefficients, delta, pi, piSquared, period, piOverT, resultCoefficient, module);
+
+            final int threadsPerBlock = 256;
+            final int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
+
+            Pointer kernelParameters = Pointer.to(Pointer.to(dResults));
+            cuLaunchKernel(function, blocks, 1,
+                    1, threadsPerBlock, 1,
+                    1, 0, null,
+                    kernelParameters, null);
+            cuCtxSynchronize();
+
+            float[] hostResults = new float[length];
+            cuMemcpyDtoH(Pointer.to(hostResults), dResults, (long) length * Sizeof.FLOAT);
+
+            cuMemFree(dResults);
+            cuCtxDestroy(context);
+
+//        writeResultsToCSV("results_" + coefficients + "coeffs_extended.csv", tmin, delta, hostResults);
+
+//        System.out.println("Computation and CSV export done successfully.");
+        }
+
+        watch.stop();
+        return watch.getTime() / 1000.0;
+    }
 
     public static void main(String[] args) {
-        JCudaDriver.setExceptionsEnabled(true);
-        cuInit(0);
+        for (int i = 0; i < 5; i++) {
+            watch = new StopWatch();
 
-        CUdevice device = new CUdevice();
-        cuDeviceGet(device, 0);
+            run();
+        }
 
-        CUcontext context = new CUcontext();
-        cuCtxCreate(context, 0, device);
+        NUM_REPS = 5;
+        double accum = 0.0;
+        var nums = new double[10];
+        for (int i = 0; i < 10; i++) {
+            watch = new StopWatch();
+            nums[i] = run();
 
-        final float tmin = -3.0f;
-        final float tmax = 3.0f;
-        final int length = 256;
-        final int coefficients = 1024;
+            accum += nums[i];
+        }
 
-        final float delta = (tmax - tmin) / (length - 1);
-        final float pi = 3.14159265f;
-        final float piSquared = pi * pi;
-        final float period = 1.0f;
-        final float piOverT = pi / period;
-        final float resultCoefficient = (4.0f * period) / piSquared;
+        var mean = accum / 10.0;
+        var stdev = calculateSD(nums, mean);
 
-        CUdeviceptr dResults = new CUdeviceptr();
-        cuMemAlloc(dResults, length * Sizeof.FLOAT);
+        System.out.printf("Time took for all that: %.4f\n", accum / 10.0);
+        System.out.printf("Standard deviation: %f\n", stdev);
+    }
 
-        CUmodule module = new CUmodule();
-        cuModuleLoad(module, KERNEL_PTX_FILENAME);
-        CUfunction function = new CUfunction();
-        cuModuleGetFunction(function, module, FUNCTION_NAME);
+    public static double calculateSD(double numArray[], double mean)
+    {
+        double standardDeviation = 0.0;
+        int length = numArray.length;
 
-        setAllConstantsInGpuMemory(tmin, coefficients, delta, pi, piSquared, period, piOverT, resultCoefficient, module);
+        for(double num: numArray) {
+            standardDeviation += Math.pow(num - mean, 2);
+        }
 
-        final int threadsPerBlock = 256;
-        final int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
-
-        Pointer kernelParameters = Pointer.to(Pointer.to(dResults));
-        cuLaunchKernel(function, blocks, 1,
-                1, threadsPerBlock, 1,
-                1, 0, null,
-                kernelParameters, null);
-        cuCtxSynchronize();
-
-        float[] hostResults = new float[length];
-        cuMemcpyDtoH(Pointer.to(hostResults), dResults, length * Sizeof.FLOAT);
-
-        cuMemFree(dResults);
-        cuCtxDestroy(context);
-
-        writeResultsToCSV("results_" + coefficients + "coeffs_extended.csv", tmin, delta, hostResults);
-
-        System.out.println("Computation and CSV export done successfully.");
+        return Math.sqrt(standardDeviation/length);
     }
 
     private static void setAllConstantsInGpuMemory(float tmin, int coefficients, float delta, float pi, float piSquared, float period, float piOverT, float resultCoefficient, CUmodule module) {
