@@ -8,6 +8,17 @@
 #define NUM_STREAMS 4
 #define BATCH_SIZE (16 * 1024 * 1024)
 
+static void HandleError( cudaError_t err,
+                         const char *file,
+                         int line ) {
+    if (err != cudaSuccess) {
+        printf( "%s in %s at line %d\n", cudaGetErrorString( err ),
+                file, line );
+        exit( EXIT_FAILURE );
+    }
+}
+#define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
+
 __global__ void computeKernel(
     float tmin,
     float delta,
@@ -21,12 +32,12 @@ __global__ void computeKernel(
     int stream_offset,
     int stream_size)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= stream_size)
+    int idx_local = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx_local >= stream_size)
         return;
 
-    idx += stream_offset;
-    float t = tmin + idx * delta;
+    int idx_global = idx_local + stream_offset;
+    float t = tmin + idx_global * delta;
     float sum = 0.0f;
 
     for (int k = 1; k <= coefficients; ++k)
@@ -36,7 +47,7 @@ __global__ void computeKernel(
         sum += cosf(angle) / denominator;
     }
 
-    results[idx] = T * 0.5f - result_coefficient * sum;
+    results[idx_local] = T * 0.5f - result_coefficient * sum;
 }
 
 int main()
@@ -47,9 +58,9 @@ int main()
 		const float tmax = 3.0f;
 		
 		const int length = 200000000;
-		//const int length = 500000000;
-		//const int length = 1000000000;
-		//const int length = 2000000000;
+		// const int length = 500000000;
+		// const int length = 1000000000;
+		// const int length = 2000000000;
 		
 		const int coefficients = 1024;
 		const float T = 1.0f;
@@ -69,20 +80,19 @@ int main()
 		float *h_results[NUM_STREAMS][2];
 		for (int i = 0; i < NUM_STREAMS; i++) {
 			for (int b = 0; b < 2; b++) {
-				cudaMalloc((void**)&d_results[i][b], BATCH_SIZE * sizeof(float));
-				cudaMallocHost((void**)&h_results[i][b], BATCH_SIZE * sizeof(float));
+				HANDLE_ERROR (cudaMalloc((void**)&d_results[i][b], BATCH_SIZE * sizeof(float)));
+				HANDLE_ERROR(cudaMallocHost((void**)&h_results[i][b], BATCH_SIZE * sizeof(float)));
 			}
 		}
 		
-		float *final_results;
-		cudaMallocHost((void**)&final_results, length * sizeof(float));
+		float *final_results = new float[length];
+		if (!final_results) {
+			std::cerr << "Failed to allocate final_results buffer!\n";
+			return 1;
+		}
 		
 		int threadsPerBlock = THREADS_PER_BLOCK;
 		int num_batches = (length + (BATCH_SIZE * NUM_STREAMS) - 1) / (BATCH_SIZE * NUM_STREAMS);
-		int stream_batch_offset[NUM_STREAMS];
-		for (int i = 0; i < NUM_STREAMS; i++) stream_batch_offset[i] = 0;
-		
-		int processed = 0;
 		for (int batch = 0; batch < num_batches; ++batch) {
 			for (int s = 0; s < NUM_STREAMS; ++s) {
 				int global_offset = (batch * NUM_STREAMS + s) * BATCH_SIZE;
@@ -110,7 +120,6 @@ int main()
 					cudaMemcpyDeviceToHost,
 					streams[s]
 				);
-				stream_batch_offset[s] = global_offset;
 			}
 			
 			if (batch > 0) {
@@ -120,7 +129,7 @@ int main()
 					if (prev_offset >= length) continue;
 					int prev_batch_size = (prev_offset + BATCH_SIZE > length) ? (length - prev_offset) : BATCH_SIZE;
 					cudaStreamSynchronize(streams[s]);
-					memcpy(final_results + prev_offset, h_results[s][prev_buf], prev_batch_size * sizeof(float));
+					std::memcpy(final_results + prev_offset, h_results[s][prev_buf], prev_batch_size * sizeof(float));
 				}
 			}
 		}
@@ -132,7 +141,7 @@ int main()
 			if (last_offset >= length) continue;
 			int last_batch_size = (last_offset + BATCH_SIZE > length) ? (length - last_offset) : BATCH_SIZE;
 			cudaStreamSynchronize(streams[s]);
-			memcpy(final_results + last_offset, h_results[s][last_buf], last_batch_size * sizeof(float));
+			std::memcpy(final_results + last_offset, h_results[s][last_buf], last_batch_size * sizeof(float));
 		}
 
 		/*
@@ -156,7 +165,7 @@ int main()
 				cudaFreeHost(h_results[i][b]);
 			}
 		}
-		cudaFreeHost(final_results);
+		delete[] final_results;
 		
 		for (int i = 0; i < NUM_STREAMS; i++) {
 			cudaStreamDestroy(streams[i]);
