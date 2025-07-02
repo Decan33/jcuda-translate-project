@@ -5,19 +5,13 @@ import jcuda.Sizeof;
 import jcuda.driver.CUcontext;
 import jcuda.driver.CUdevice;
 import jcuda.driver.CUdeviceptr;
+import jcuda.driver.CUevent;
 import jcuda.driver.CUfunction;
 import jcuda.driver.CUmodule;
 import jcuda.driver.JCudaDriver;
-import org.apache.commons.lang3.time.StopWatch;
-
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.Locale;
 
 import static jcuda.driver.JCudaDriver.cuCtxCreate;
 import static jcuda.driver.JCudaDriver.cuCtxDestroy;
-import static jcuda.driver.JCudaDriver.cuCtxSynchronize;
 import static jcuda.driver.JCudaDriver.cuDeviceGet;
 import static jcuda.driver.JCudaDriver.cuInit;
 import static jcuda.driver.JCudaDriver.cuLaunchKernel;
@@ -28,123 +22,143 @@ import static jcuda.driver.JCudaDriver.cuMemcpyHtoD;
 import static jcuda.driver.JCudaDriver.cuModuleGetFunction;
 import static jcuda.driver.JCudaDriver.cuModuleGetGlobal;
 import static jcuda.driver.JCudaDriver.cuModuleLoad;
+import static jcuda.driver.JCudaDriver.cuEventCreate;
+import static jcuda.driver.JCudaDriver.cuEventElapsedTime;
+import static jcuda.driver.JCudaDriver.cuEventRecord;
+import static jcuda.driver.JCudaDriver.cuEventSynchronize;
+import static jcuda.driver.JCudaDriver.cuEventDestroy;
 
 @SuppressWarnings("java:S106")
 public class FourierCalculator2 {
-    static StopWatch watch = new StopWatch();
-    public static final String FUNCTION_NAME = "fourier";
-    public static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
-    public static int NUM_REPS = 1;
+    private static final String FUNCTION_NAME = "fourier";
+    private static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
+    private static final int NUM_REPS = 20;
+    private static final int LENGTH = 1_000_000_000;
+    private static final int COEFFICIENTS = 1024;
+    private static final float TMIN = -3.0f;
+    private static final float TMAX = 3.0f;
+    private static final int THREADS_PER_BLOCK = 256;
+    public static final double THOUSAND = 1000.0;
 
+    public static void main(String[] args) {
 
-    static double run() {
-        watch.start();
-        for (int rep = 0; rep < NUM_REPS; rep++) {
+        var prepTimes = new double[NUM_REPS];
+        var kernelTimes = new double[NUM_REPS];
+        var deleteTimes = new double[NUM_REPS];
+
+        var startWholeTime = System.nanoTime();
+        for (var rep = 0; rep < NUM_REPS; rep++) {
+
+            var prepStart = System.nanoTime();
             JCudaDriver.setExceptionsEnabled(true);
             cuInit(0);
 
-            CUdevice device = new CUdevice();
+            var device = new CUdevice();
             cuDeviceGet(device, 0);
 
-            CUcontext context = new CUcontext();
+            var context = new CUcontext();
             cuCtxCreate(context, 0, device);
 
-            final float tmin = -3.0f;
-            final float tmax = 3.0f;
+            var delta = (TMAX - TMIN) / (LENGTH - 1);
+            var deviceResults = new CUdeviceptr();
+            cuMemAlloc(deviceResults, (long) LENGTH * Sizeof.FLOAT);
 
-//        int length = 200000000;
-//        int length = 500000000;
-//            int length = 1000000000;
-        int length = 2000000000;
-            final int coefficients = 1024;
-
-            final float delta = (tmax - tmin) / (length - 1);
-            final float pi = 3.14159265f;
-            final float piSquared = pi * pi;
-            final float period = 1.0f;
-            final float piOverT = pi / period;
-            final float resultCoefficient = (4.0f * period) / piSquared;
-
-            CUdeviceptr dResults = new CUdeviceptr();
-            cuMemAlloc(dResults, (long) length * Sizeof.FLOAT);
-
-            CUmodule module = new CUmodule();
+            var module = new CUmodule();
             cuModuleLoad(module, KERNEL_PTX_FILENAME);
-            CUfunction function = new CUfunction();
+
+            var function = new CUfunction();
             cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-            setAllConstantsInGpuMemory(tmin, coefficients, delta, pi, piSquared, period, piOverT, resultCoefficient, module);
+            setAllConstants(delta, module);
 
-            final int threadsPerBlock = 256;
-            final int blocks = (length + threadsPerBlock - 1) / threadsPerBlock;
+            var kernelParameters = Pointer.to(Pointer.to(deviceResults));
+            var blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-            Pointer kernelParameters = Pointer.to(Pointer.to(dResults));
-            cuLaunchKernel(function, blocks, 1,
-                    1, threadsPerBlock, 1,
-                    1, 0, null,
-                    kernelParameters, null);
-            cuCtxSynchronize();
+            var prepEnd = System.nanoTime();
 
-            float[] hostResults = new float[length];
-            cuMemcpyDtoH(Pointer.to(hostResults), dResults, (long) length * Sizeof.FLOAT);
+            prepTimes[rep] = (prepEnd - prepStart) / 1e9;
+            var kernelStart = new CUevent();
+            var kernelStop = new CUevent();
 
-            cuMemFree(dResults);
+            cuEventCreate(kernelStart, 0);
+            cuEventCreate(kernelStop, 0);
+            cuEventRecord(kernelStart, null);
+
+            cuLaunchKernel(function,
+                    blocksPerGrid, 1, 1,
+                    THREADS_PER_BLOCK, 1, 1,
+                    0, null,
+                    kernelParameters, null
+            );
+
+            cuEventRecord(kernelStop, null);
+            cuEventSynchronize(kernelStop);
+            var kernelMs = new float[1];
+
+            cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
+            kernelTimes[rep] = kernelMs[0] / THOUSAND;
+            cuEventDestroy(kernelStart);
+            cuEventDestroy(kernelStop);
+
+            var deleteStart = System.nanoTime();
+            var hostResults = new float[LENGTH];
+
+            cuMemcpyDtoH(Pointer.to(hostResults), deviceResults, (long) LENGTH * Sizeof.FLOAT);
+            cuMemFree(deviceResults);
             cuCtxDestroy(context);
 
-//        writeResultsToCSV("results_" + coefficients + "coeffs_extended.csv", tmin, delta, hostResults);
-
-//        System.out.println("Computation and CSV export done successfully.");
+            var deleteEnd = System.nanoTime();
+            deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
         }
+        var endWholeTime = System.nanoTime();
 
-        watch.stop();
-        return watch.getTime() / 1000.0;
+        logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    public static void main(String[] args) {
-        for (int i = 0; i < 5; i++) {
-            watch = new StopWatch();
-
-            run();
-        }
-
-        NUM_REPS = 5;
-        double accum = 0.0;
-        var nums = new double[10];
-        for (int i = 0; i < 10; i++) {
-            watch = new StopWatch();
-            nums[i] = run();
-
-            accum += nums[i];
-        }
-
-        var mean = accum / 10.0;
-        var stdev = calculateSD(nums, mean);
-
-        System.out.printf("Time took for all that: %.4f\n", accum / 10.0);
-        System.out.printf("Standard deviation: %f\n", stdev);
-    }
-
-    public static double calculateSD(double numArray[], double mean)
-    {
-        double standardDeviation = 0.0;
-        int length = numArray.length;
-
-        for(double num: numArray) {
-            standardDeviation += Math.pow(num - mean, 2);
-        }
-
-        return Math.sqrt(standardDeviation/length);
-    }
-
-    private static void setAllConstantsInGpuMemory(float tmin, int coefficients, float delta, float pi, float piSquared, float period, float piOverT, float resultCoefficient, CUmodule module) {
-        setConstant(module, "const_tmin", tmin);
+    private static void setAllConstants(float delta, CUmodule module) {
+        setConstant(module, "const_tmin", TMIN);
         setConstant(module, "const_delta", delta);
-        setConstant(module, "const_coefficients", coefficients);
-        setConstant(module, "const_pi", pi);
-        setConstant(module, "const_pi_squared", piSquared);
-        setConstant(module, "const_T", period);
-        setConstant(module, "const_pi_over_T", piOverT);
-        setConstant(module, "constant_result_coefficient", resultCoefficient);
+        setConstant(module, "const_coefficients", COEFFICIENTS);
+        setConstant(module, "const_pi", (float) Math.PI);
+        setConstant(module, "const_pi_squared", (float) (Math.PI * Math.PI));
+        setConstant(module, "const_T", 1.0f);
+        setConstant(module, "const_pi_over_T", (float) (Math.PI));
+        setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
+    }
+
+    private static void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+        for (var i = 0; i < prep.length; i++) {
+            System.out.printf("Repetition %d:\n", i + 1);
+            System.out.printf("  Preparation time: %.6f s\n", prep[i]);
+            System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+            System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+        }
+        var n = prep.length;
+        var prepAvg = mean(prep);
+        var kernelAvg = mean(kernel);
+        var delAvg = mean(del);
+        var prepStd = standardDeviation(prep, prepAvg);
+        var kernelStd = standardDeviation(kernel, kernelAvg);
+        var delStd = standardDeviation(del, delAvg);
+
+        System.out.printf("\nAverages over %d repetitions:\n", n);
+        System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
+        System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
+        System.out.printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delAvg, delStd);
+        System.out.printf("  Whole time taken for %d reps: %.6f s\n",NUM_REPS, wholeTime / 1e9);
+        System.out.println("=========================");
+    }
+
+    private static double mean(double[] arr) {
+        var sum = 0.0;
+        for (var v : arr) sum += v;
+        return sum / arr.length;
+    }
+
+    private static double standardDeviation(double[] arr, double mean) {
+        var sum = 0.0;
+        for (var v : arr) sum += (v - mean) * (v - mean);
+        return Math.sqrt(sum / arr.length);
     }
 
     private static void setConstant(CUmodule module, String name, float value) {
@@ -157,17 +171,5 @@ public class FourierCalculator2 {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
         cuMemcpyHtoD(ptr, Pointer.to(new int[]{value}), Sizeof.INT);
-    }
-
-    private static void writeResultsToCSV(String filename, float tmin, float delta, float[] results) {
-        try (PrintWriter writer = new PrintWriter(new FileWriter(filename))) {
-            writer.println("t,f");
-            for (int i = 0; i < results.length; i++) {
-                float t = tmin + i * delta;
-                writer.printf(Locale.US, "%.6f,%.6f%n", t, results[i]);
-            }
-        } catch (IOException e) {
-            System.err.println("Error writing CSV: " + e.getMessage());
-        }
     }
 }

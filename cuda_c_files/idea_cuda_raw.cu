@@ -1,10 +1,13 @@
 #include <iostream>
+// #include <fstream>
 #include <cmath>
 #include <cuda_runtime.h>
 #include <string>
+#include <vector>
+#include <chrono>
 
-#define THREADS_PER_BLOCK 256
-#define MAX_COEFFICIENTS 1024
+constexpr int THREADS_PER_BLOCK = 256;
+constexpr int NUM_REPS = 5;
 
 __global__ void computeKernel(
     float tmin,
@@ -17,70 +20,100 @@ __global__ void computeKernel(
     float T,
     float *results)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= length)
-        return;
-
-    float t = tmin + idx * delta;
-    float sum = 0.0f;
-
-    for (int k = 1; k <= coefficients; ++k)
-    {
-        float angle = (2 * k - 1) * pi_over_T * t;
-        float denominator = 4.0f * k * k - 4.0f * k + 1.0f;
+    auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= length) return;
+    auto t = tmin + idx * delta;
+    auto sum = 0.0f;
+    for (auto k = 1; k <= coefficients; ++k) {
+        auto angle = (2 * k - 1) * pi_over_T * t;
+        auto denominator = 4.0f * k * k - 4.0f * k + 1.0f;
         sum += cosf(angle) / denominator;
     }
-
     results[idx] = T * 0.5f - result_coefficient * sum;
 }
 
-int main()
-{
-	auto NUM_REPS = 5;
-	for(int rep = 0; rep < NUM_REPS; rep++) {
-	
-		const float tmin = -3.0f;
-		const float tmax = 3.0f;
+int main() {
+    constexpr float tmin = -3.0f;
+    constexpr float tmax = 3.0f;
+    constexpr int length = 2000000000;
+    constexpr int coefficients = 1024;
+    constexpr float T = 1.0f;
+    constexpr float delta = (tmax - tmin) / (length - 1);
+    constexpr float pi = 3.14159265f;
+    constexpr float pi_sq = pi * pi;
+    constexpr float pi_over_T = pi / T;
+    constexpr float result_coefficient = (4.0f * T) / pi_sq;
 
-		//const int length = 200000000;
-		//const int length = 500000000;
-		//const int length = 1000000000;
-		const int length = 2000000000;
-		
-		const int coefficients = 1024;
-		const float T = 1.0f;
-		const float delta = (tmax - tmin) / (length - 1);
+    std::vector<double> prep_times, kernel_times, delete_times;
+    for (auto rep = 0; rep < NUM_REPS; ++rep) {
+        auto prep_start = std::chrono::high_resolution_clock::now();
+        float *d_results;
+        cudaMalloc(&d_results, length * sizeof(float));
 
-		const float pi = 3.14159265f;
-		const float pi_sq = pi * pi;
-		const float pi_over_T = pi / T;
-		const float result_coefficient = (4.0f * T) / pi_sq;
+        auto threadsPerBlock = THREADS_PER_BLOCK;
+        auto blocksPerGrid = (length + threadsPerBlock - 1) / threadsPerBlock;
+        auto prep_end = std::chrono::high_resolution_clock::now();
+        prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
 
-		float *d_results;
-		cudaMalloc((void**)&d_results, length * sizeof(float));
+        cudaEvent_t kernel_start, kernel_stop;
+        cudaEventCreate(&kernel_start);
+        cudaEventCreate(&kernel_stop);
+        cudaEventRecord(kernel_start);
 
-		int threadsPerBlock = THREADS_PER_BLOCK;
-		int blocksPerGrid = (length + threadsPerBlock - 1) / threadsPerBlock;
+        computeKernel<<<blocksPerGrid, threadsPerBlock>>>(
+            tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T, d_results
+        );
+        cudaDeviceSynchronize();
+        cudaEventRecord(kernel_stop);
+        cudaEventSynchronize(kernel_stop);
+        float kernel_ms = 0.0f;
+        cudaEventElapsedTime(&kernel_ms, kernel_start, kernel_stop);
 
-		computeKernel<<<blocksPerGrid, threadsPerBlock>>>(
-			tmin,
-			delta,
-			length,
-			coefficients,
-			pi,
-			pi_over_T,
-			result_coefficient,
-			T,
-			d_results
-		);
-		cudaDeviceSynchronize();
+        kernel_times.push_back(kernel_ms / 1000.0);
 
-		float *h_results = new float[length];
-		cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaEventDestroy(kernel_start);
+        cudaEventDestroy(kernel_stop);
 
-		cudaFree(d_results);
-		delete[] h_results;
-	}
-    
+        auto delete_start = std::chrono::high_resolution_clock::now();
+        float *h_results = new float[length];
+        cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
+
+        delete[] h_results;
+        cudaFree(d_results);
+        auto delete_end = std::chrono::high_resolution_clock::now();
+
+        delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
+    }
+    double prep_sum = 0, kernel_sum = 0, delete_sum = 0;
+    for (auto i = 0u; i < prep_times.size(); ++i) {
+
+        printf("Repetition %u:\n", i + 1);
+        printf("  Preparation time: %.6f s\n", prep_times[i]);
+        printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
+        printf("  Memory deletion time: %.6f s\n", delete_times[i]);
+        prep_sum += prep_times[i];
+        kernel_sum += kernel_times[i];
+        delete_sum += delete_times[i];
+    }
+
+    auto n = static_cast<double>(prep_times.size());
+    double prep_avg = prep_sum / n;
+    double kernel_avg = kernel_sum / n;
+    double delete_avg = delete_sum / n;
+    double prep_var = 0, kernel_var = 0, delete_var = 0;
+    for (auto i = 0u; i < prep_times.size(); ++i) {
+        prep_var += (prep_times[i] - prep_avg) * (prep_times[i] - prep_avg);
+        kernel_var += (kernel_times[i] - kernel_avg) * (kernel_times[i] - kernel_avg);
+        delete_var += (delete_times[i] - delete_avg) * (delete_times[i] - delete_avg);
+    }
+
+    double prep_std = std::sqrt(prep_var / n);
+    double kernel_std = std::sqrt(kernel_var / n);
+    double delete_std = std::sqrt(delete_var / n);
+    printf("\nAverages over %zu repetitions:\n", prep_times.size());
+    printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prep_avg, prep_std);
+    printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernel_avg, kernel_std);
+    printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delete_avg, delete_std);
+    printf("=========================\n\n");
     return 0;
 }
