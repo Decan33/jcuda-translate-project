@@ -1,5 +1,4 @@
 #include <iostream>
-// #include <fstream>
 #include <cmath>
 #include <cuda_runtime.h>
 #include <string>
@@ -42,7 +41,6 @@ int main()
 	
 		const float tmin = -3.0f;
 		const float tmax = 3.0f;
-		// const int length = 65536 * 16;
 
 		//const int length = 200000000;
 		//const int length = 500000000;
@@ -80,26 +78,8 @@ int main()
 		float *h_results = new float[length];
 		cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
 
-
-		/*
-		
-			
-		std::ofstream file("results_1024coeff.csv");
-		file << "t,f\n";
-		file.precision(6);
-		file << std::fixed;
-		for (int i = 0; i < length; ++i)
-		{
-			float t = tmin + i * delta;
-			file << t << "," << h_results[i] << "\n";
-		}
-		file.close();
-	*/
 		cudaFree(d_results);
 		delete[] h_results;
-
-		// std::cout << "Computation complete. Results saved to results.csv.\n";
-		
 	}
     
     return 0;

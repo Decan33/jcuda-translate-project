@@ -1,7 +1,6 @@
 #include <iostream>
 #include <cuda_runtime.h>
 #include <math.h>
-// #include <fstream>
 
 #define THREADS_PER_BLOCK 256
 #define MAX_COEFFICIENTS 1024
@@ -88,17 +87,6 @@ int main()
 
 		float* result_host = new float[length];
 		cudaMemcpy(result_host, result_device, length * sizeof(float), cudaMemcpyDeviceToHost);
-
-		// std::ofstream stream("result_256.csv");
-		// stream << "t,f\n";
-		// for (size_t i = 0; i < length; i++)
-		// {
-		//     float t = tmin + i * delta;
-		//     stream << t << "," << result_host[i] << "\n";
-		// }
-
-		// stream.close();
-		
 
 		delete[] result_host;
 		cudaFree(result_device);

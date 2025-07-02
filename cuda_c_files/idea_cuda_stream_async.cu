@@ -3,17 +3,6 @@
 #include <algorithm>
 #include <fstream>
 
-// CUDA error checking macro
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " << cudaGetErrorString(err) << std::endl; \
-            exit(EXIT_FAILURE); \
-        } \
-    } while (0)
-
-// Constant memory for coefficients and parameters
 __constant__ float d_coefficients[1024];
 __constant__ float d_params[5];  // [tmin, tmax, length, coefficients, delta]
 
@@ -27,10 +16,10 @@ void initConstantMemory(int coefficients, float tmin, float tmax, int length, fl
     for(int k = 1; k <= coefficients; ++k) {
         h_coefficients[k-1] = 1.0f / (4.0f * k * k - 4.0f * k + 1.0f);
     }
-    CUDA_CHECK(cudaMemcpyToSymbol(d_coefficients, h_coefficients, coefficients * sizeof(float)));
+    cudaMemcpyToSymbol(d_coefficients, h_coefficients, coefficients * sizeof(float));
 
     float h_params[5] = {tmin, tmax, (float)length, (float)coefficients, delta};
-    CUDA_CHECK(cudaMemcpyToSymbol(d_params, h_params, 5 * sizeof(float)));
+    cudaMemcpyToSymbol(d_params, h_params, 5 * sizeof(float));
 }
 
 __global__ void fourier(int start_idx, int end_idx, float *results)
@@ -42,10 +31,10 @@ __global__ void fourier(int start_idx, int end_idx, float *results)
     float sum = 0.0f;
     const float pi = 3.14159265f;
     int coeff = (int)d_params[3];
-    if (coeff > 1024) coeff = 1024; // Defensive
-    // Shared memory for intermediate calculations
+    if (coeff > 1024) coeff = 1024;
+
     extern __shared__ float s_angles[];
-    // Defensive: only threads < coeff fill shared memory
+
     for(int k = 1; k <= coeff; ++k) {
         s_angles[k-1] = (2 * k - 1) * pi * t;
     }
@@ -79,37 +68,30 @@ int main()
         // Use a reasonable chunk size that fits in GPU memory
         const int chunkSize = 10000000; // 10 million
 
-        // Initialize constant memory
         initConstantMemory(coefficients, tmin, tmax, length, delta);
 
-        // Allocate device and host memory for one chunk
         float *d_results;
-        CUDA_CHECK(cudaMalloc(&d_results, chunkSize * sizeof(float)));
+        cudaMalloc(&d_results, chunkSize * sizeof(float));
 
         float *h_results;
-        CUDA_CHECK(cudaHostAlloc(&h_results, chunkSize * sizeof(float), 
-                    cudaHostAllocDefault | cudaHostAllocMapped));
+        cudaHostAlloc(&h_results, chunkSize * sizeof(float),
+                    cudaHostAllocDefault | cudaHostAllocMapped);
 
-        // Calculate shared memory size
         size_t sharedMemSize = coefficients * sizeof(float);
 
-        // Process data in chunks
         for (int chunkStart = 0; chunkStart < length; chunkStart += chunkSize) {
             int chunkEnd = std::min(chunkStart + chunkSize, length);
             int thisChunkSize = chunkEnd - chunkStart;
             int blocks = (thisChunkSize + threadsPerBlock - 1) / threadsPerBlock;
 
-            // Launch kernel for this chunk
             fourier<<<blocks, threadsPerBlock, sharedMemSize>>>(chunkStart, chunkEnd, d_results);
-            CUDA_CHECK(cudaGetLastError());
-            CUDA_CHECK(cudaDeviceSynchronize());
+            cudaDeviceSynchronize();
 
-            // Copy results back to host
-            CUDA_CHECK(cudaMemcpy(h_results, d_results, thisChunkSize * sizeof(float), cudaMemcpyDeviceToHost));
+            cudaMemcpy(h_results, d_results, thisChunkSize * sizeof(float), cudaMemcpyDeviceToHost);
         }
 
-        CUDA_CHECK(cudaFree(d_results));
-        CUDA_CHECK(cudaFreeHost(h_results));
+        cudaFree(d_results);
+        cudaFreeHost(h_results);
     }
 
     return 0;

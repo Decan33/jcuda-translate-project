@@ -1,5 +1,4 @@
 #include <iostream>
-// #include <fstream>
 #include <cmath>
 #include <cuda_runtime.h>
 
@@ -8,16 +7,6 @@
 #define NUM_STREAMS 4
 #define BATCH_SIZE (16 * 1024 * 1024)
 
-static void HandleError( cudaError_t err,
-                         const char *file,
-                         int line ) {
-    if (err != cudaSuccess) {
-        printf( "%s in %s at line %d\n", cudaGetErrorString( err ),
-                file, line );
-        exit( EXIT_FAILURE );
-    }
-}
-#define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
 
 __global__ void computeKernel(
     float tmin,
@@ -80,16 +69,12 @@ int main()
 		float *h_results[NUM_STREAMS][2];
 		for (int i = 0; i < NUM_STREAMS; i++) {
 			for (int b = 0; b < 2; b++) {
-				HANDLE_ERROR (cudaMalloc((void**)&d_results[i][b], BATCH_SIZE * sizeof(float)));
-				HANDLE_ERROR(cudaMallocHost((void**)&h_results[i][b], BATCH_SIZE * sizeof(float)));
+				cudaMalloc((void**)&d_results[i][b], BATCH_SIZE * sizeof(float));
+				cudaMallocHost((void**)&h_results[i][b], BATCH_SIZE * sizeof(float));
 			}
 		}
 		
 		float *final_results = new float[length];
-		if (!final_results) {
-			std::cerr << "Failed to allocate final_results buffer!\n";
-			return 1;
-		}
 		
 		int threadsPerBlock = THREADS_PER_BLOCK;
 		int num_batches = (length + (BATCH_SIZE * NUM_STREAMS) - 1) / (BATCH_SIZE * NUM_STREAMS);
@@ -143,21 +128,6 @@ int main()
 			cudaStreamSynchronize(streams[s]);
 			std::memcpy(final_results + last_offset, h_results[s][last_buf], last_batch_size * sizeof(float));
 		}
-
-		/*
-		
-			
-		std::ofstream file("results_1024coeff.csv");
-		file << "t,f\n";
-		file.precision(6);
-		file << std::fixed;
-		for (int i = 0; i < length; ++i)
-		{
-			float t = tmin + i * delta;
-			file << t << "," << h_results[i] << "\n";
-		}
-		file.close();
-	*/
 
 		for (int i = 0; i < NUM_STREAMS; i++) {
 			for (int b = 0; b < 2; b++) {
