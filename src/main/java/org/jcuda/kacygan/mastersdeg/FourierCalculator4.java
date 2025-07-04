@@ -27,13 +27,20 @@ public class FourierCalculator4 {
     private static final int THREADS_PER_BLOCK = 256;
 
     public static void main(String[] args) {
+        // Cold run to warm up GPU
+        System.out.println("Performing cold run to warm up GPU...");
+        performColdRun();
+        System.out.println("Cold run completed.\n");
+        
         var prepTimes = new double[NUM_REPS];
         var kernelTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
+        
         var startWholeTime = System.nanoTime();
 
         for (var rep = 0; rep < NUM_REPS; rep++) {
             var prepStart = System.nanoTime();
+            
             JCudaDriver.setExceptionsEnabled(true);
             cuInit(0);
 
@@ -44,6 +51,7 @@ public class FourierCalculator4 {
             cuCtxCreate(context, 0, device);
 
             var delta = (TMAX - TMIN) / (LENGTH - 1);
+            
             var streams = new CUstream[NUM_STREAMS];
             for (var i = 0; i < NUM_STREAMS; i++) {
                 streams[i] = new CUstream();
@@ -53,6 +61,7 @@ public class FourierCalculator4 {
             var chunkSize = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
             var deviceResults = new CUdeviceptr[NUM_STREAMS];
             var hostResults = new float[NUM_STREAMS][];
+            
             var module = new CUmodule();
             cuModuleLoad(module, PTX_FILENAME);
 
@@ -61,6 +70,7 @@ public class FourierCalculator4 {
 
             var prepEnd = System.nanoTime();
             prepTimes[rep] = (prepEnd - prepStart) / 1e9;
+            
             var kernelStart = new CUevent();
             var kernelStop = new CUevent();
 
@@ -95,6 +105,7 @@ public class FourierCalculator4 {
 
                 cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
             }
+            
             for (var stream : streams) {
                 cuStreamSynchronize(stream);
             }
@@ -105,19 +116,23 @@ public class FourierCalculator4 {
 
             cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
             kernelTimes[rep] = kernelMs[0] / 1000.0;
+            
             cuEventDestroy(kernelStart);
             cuEventDestroy(kernelStop);
 
             var deleteStart = System.nanoTime();
+            
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemFree(deviceResults[i]);
                 cuStreamDestroy(streams[i]);
             }
 
             cuCtxDestroy(context);
+            
             var deleteEnd = System.nanoTime();
             deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
         }
+        
         var endWholeTime = System.nanoTime();
 
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
@@ -155,5 +170,74 @@ public class FourierCalculator4 {
         var sum = 0.0;
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
+    }
+    
+    private static void performColdRun() {
+        JCudaDriver.setExceptionsEnabled(true);
+        cuInit(0);
+
+        var device = new CUdevice();
+        cuDeviceGet(device, 0);
+
+        var context = new CUcontext();
+        cuCtxCreate(context, 0, device);
+
+        var delta = (TMAX - TMIN) / (LENGTH - 1);
+        
+        var streams = new CUstream[NUM_STREAMS];
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            streams[i] = new CUstream();
+            cuStreamCreate(streams[i], 0);
+        }
+
+        var chunkSize = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
+        var deviceResults = new CUdeviceptr[NUM_STREAMS];
+        var hostResults = new float[NUM_STREAMS][];
+        
+        var module = new CUmodule();
+        cuModuleLoad(module, PTX_FILENAME);
+
+        var function = new CUfunction();
+        cuModuleGetFunction(function, module, FUNCTION_NAME);
+
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            var startIdx = i * chunkSize;
+            var currentChunkSize = Math.min(chunkSize, LENGTH - startIdx);
+
+            deviceResults[i] = new CUdeviceptr();
+            cuMemAlloc(deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
+            hostResults[i] = new float[currentChunkSize];
+
+            var chunkTmin = TMIN + startIdx * delta;
+            var kernelParameters = Pointer.to(
+                Pointer.to(new float[]{chunkTmin}),
+                Pointer.to(new float[]{delta}),
+                Pointer.to(new int[]{currentChunkSize}),
+                Pointer.to(new int[]{COEFFICIENTS}),
+                Pointer.to(deviceResults[i])
+            );
+
+            var blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            cuLaunchKernel(function,
+                blocksPerGrid, 1, 1,
+                THREADS_PER_BLOCK, 1, 1,
+                0, streams[i],
+                kernelParameters, null
+            );
+
+            cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
+        }
+        
+        for (var stream : streams) {
+            cuStreamSynchronize(stream);
+        }
+
+        // Cleanup
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            cuMemFree(deviceResults[i]);
+            cuStreamDestroy(streams[i]);
+        }
+        
+        cuCtxDestroy(context);
     }
 }

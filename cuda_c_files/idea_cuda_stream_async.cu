@@ -58,6 +58,31 @@ __global__ void fourier(int start_idx, int end_idx, float *results)
     results[idx - start_idx] = 0.5f - (4.0f * sum) / (pi * pi);
 }
 
+void performColdRun(float tmin, float tmax, int length, int coefficients, float delta) {
+    initConstantMemory(coefficients, tmin, tmax, length, delta);
+    float *d_results;
+    CUDA_CHECK(cudaMalloc(&d_results, CHUNK_SIZE * sizeof(float)));
+    float *h_results;
+    CUDA_CHECK(cudaHostAlloc(&h_results, CHUNK_SIZE * sizeof(float), cudaHostAllocDefault | cudaHostAllocMapped));
+    auto sharedMemSize = coefficients * sizeof(float);
+
+    for (auto chunkStart = 0; chunkStart < length; chunkStart += CHUNK_SIZE) {
+        auto chunkEnd = std::min(chunkStart + CHUNK_SIZE, length);
+        auto thisChunkSize = chunkEnd - chunkStart;
+        auto blocks = (thisChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+        fourier<<<blocks, THREADS_PER_BLOCK, sharedMemSize>>>(chunkStart, chunkEnd, d_results);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        CUDA_CHECK(cudaMemcpy(h_results, d_results, thisChunkSize * sizeof(float), cudaMemcpyDeviceToHost));
+    }
+
+    // Cleanup
+    CUDA_CHECK(cudaFree(d_results));
+    CUDA_CHECK(cudaFreeHost(h_results));
+}
+
 int main()
 {
     constexpr float tmin = -3.0f;
@@ -65,15 +90,27 @@ int main()
     constexpr int length = 200000000;
     constexpr int coefficients = 1024;
     constexpr float delta = (tmax - tmin) / (length - 1);
+    
+    // Cold run to warm up GPU
+    printf("Performing cold run to warm up GPU...\n");
+    performColdRun(tmin, tmax, length, coefficients, delta);
+    printf("Cold run completed.\n\n");
+    
     std::vector<double> prep_times, kernel_times, delete_times;
+    
     for (auto rep = 0; rep < NUM_REPS; rep++) {
         auto prep_start = std::chrono::high_resolution_clock::now();
+        
         initConstantMemory(coefficients, tmin, tmax, length, delta);
+        
         float *d_results;
         CUDA_CHECK(cudaMalloc(&d_results, CHUNK_SIZE * sizeof(float)));
+        
         float *h_results;
         CUDA_CHECK(cudaHostAlloc(&h_results, CHUNK_SIZE * sizeof(float), cudaHostAllocDefault | cudaHostAllocMapped));
+        
         auto sharedMemSize = coefficients * sizeof(float);
+        
         auto prep_end = std::chrono::high_resolution_clock::now();
         prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
 
@@ -93,23 +130,29 @@ int main()
 
             CUDA_CHECK(cudaMemcpy(h_results, d_results, thisChunkSize * sizeof(float), cudaMemcpyDeviceToHost));
         }
+        
         CUDA_CHECK(cudaEventRecord(kernel_stop));
         CUDA_CHECK(cudaEventSynchronize(kernel_stop));
+        
         float kernel_ms = 0.0f;
         CUDA_CHECK(cudaEventElapsedTime(&kernel_ms, kernel_start, kernel_stop));
         kernel_times.push_back(kernel_ms / 1000.0);
+        
         CUDA_CHECK(cudaEventDestroy(kernel_start));
         CUDA_CHECK(cudaEventDestroy(kernel_stop));
 
         auto delete_start = std::chrono::high_resolution_clock::now();
+        
         CUDA_CHECK(cudaFree(d_results));
         CUDA_CHECK(cudaFreeHost(h_results));
+        
         auto delete_end = std::chrono::high_resolution_clock::now();
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
     }
 
     double prep_sum = 0, kernel_sum = 0, delete_sum = 0;
     printf("\n===== Timing Summary =====\n");
+    
     for (auto i = 0u; i < prep_times.size(); ++i) {
         printf("Repetition %u:\n", i + 1);
         printf("  Preparation time: %.6f s\n", prep_times[i]);
@@ -119,6 +162,7 @@ int main()
         kernel_sum += kernel_times[i];
         delete_sum += delete_times[i];
     }
+    
     printf("\nAverages over %zu repetitions:\n", prep_times.size());
     printf("  Avg preparation time: %.6f s\n", prep_sum / prep_times.size());
     printf("  Avg kernel execution time: %.6f s\n", kernel_sum / kernel_times.size());

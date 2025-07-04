@@ -53,13 +53,20 @@ public class FourierCalculator3 {
     private static final int THREADS_PER_BLOCK = 256;
 
     public static void main(String[] args) {
+        // Cold run to warm up GPU
+        System.out.println("Performing cold run to warm up GPU...");
+        performColdRun();
+        System.out.println("Cold run completed.\n");
+        
         var prepTimes = new double[NUM_REPS];
         var kernelTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
 
         var startWholeTime = System.nanoTime();
+        
         for (var rep = 0; rep < NUM_REPS; rep++) {
             var prepStart = System.nanoTime();
+            
             JCudaDriver.setExceptionsEnabled(true);
             cuInit(0);
 
@@ -71,6 +78,7 @@ public class FourierCalculator3 {
 
             var delta = (TMAX - TMIN) / (LENGTH - 1);
             var chunkSize = LENGTH / NUM_STREAMS;
+            
             var module = new CUmodule();
             cuModuleLoad(module, PTX_FILENAME);
 
@@ -88,6 +96,7 @@ public class FourierCalculator3 {
             var streams = new CUstream[NUM_STREAMS];
             var deviceChunks = new CUdeviceptr[NUM_STREAMS];
             var hostChunks = new float[NUM_STREAMS][chunkSize];
+            
             for (var i = 0; i < NUM_STREAMS; i++) {
                 streams[i] = new CUstream();
                 cuStreamCreate(streams[i], 0);
@@ -121,6 +130,7 @@ public class FourierCalculator3 {
                 cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
                     chunkSize * Sizeof.FLOAT, streams[i]);
             }
+            
             for (var stream : streams) {
                 cuStreamSynchronize(stream);
             }
@@ -134,18 +144,21 @@ public class FourierCalculator3 {
 
             cuEventDestroy(kernelStart);
             cuEventDestroy(kernelStop);
+            
             var deleteStart = System.nanoTime();
 
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemFree(deviceChunks[i]);
                 cuStreamDestroy(streams[i]);
             }
+            
             cuCtxDestroy(context);
 
             var deleteEnd = System.nanoTime();
 
             deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
         }
+        
         var endWholeTime = System.nanoTime();
 
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
@@ -209,5 +222,70 @@ public class FourierCalculator3 {
         } catch (IOException e) {
             System.err.println("Error writing CSV: " + e.getMessage());
         }
+    }
+    
+    private static void performColdRun() {
+        JCudaDriver.setExceptionsEnabled(true);
+        cuInit(0);
+
+        var device = new CUdevice();
+        cuDeviceGet(device, 0);
+
+        var context = new CUcontext();
+        cuCtxCreate(context, 0, device);
+
+        var delta = (TMAX - TMIN) / (LENGTH - 1);
+        var chunkSize = LENGTH / NUM_STREAMS;
+        var module = new CUmodule();
+        cuModuleLoad(module, PTX_FILENAME);
+
+        var function = new CUfunction();
+        cuModuleGetFunction(function, module, FUNCTION_NAME);
+
+        setConstant(module, "const_delta", delta);
+        setConstant(module, "const_coefficients", COEFFICIENTS);
+        setConstant(module, "const_pi", (float) Math.PI);
+        setConstant(module, "const_pi_squared", (float) (Math.PI * Math.PI));
+        setConstant(module, "const_T", 1.0f);
+        setConstant(module, "const_pi_over_T", (float) (Math.PI));
+        setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
+
+        var streams = new CUstream[NUM_STREAMS];
+        var deviceChunks = new CUdeviceptr[NUM_STREAMS];
+        var hostChunks = new float[NUM_STREAMS][chunkSize];
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            streams[i] = new CUstream();
+            cuStreamCreate(streams[i], 0);
+
+            deviceChunks[i] = new CUdeviceptr();
+            cuMemAlloc(deviceChunks[i], chunkSize * Sizeof.FLOAT);
+        }
+
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            var offset = i * chunkSize;
+            var tminChunk = TMIN + offset * delta;
+            setConstant(module, "const_tmin", tminChunk);
+            setConstant(module, "const_chunk_size", chunkSize);
+            var kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
+
+            var blocks = (chunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            cuLaunchKernel(function,
+                blocks, 1, 1,
+                THREADS_PER_BLOCK, 1, 1,
+                0, streams[i],
+                kernelParams, null);
+            cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
+                chunkSize * Sizeof.FLOAT, streams[i]);
+        }
+        for (var stream : streams) {
+            cuStreamSynchronize(stream);
+        }
+
+        // Cleanup
+        for (var i = 0; i < NUM_STREAMS; i++) {
+            cuMemFree(deviceChunks[i]);
+            cuStreamDestroy(streams[i]);
+        }
+        cuCtxDestroy(context);
     }
 }
