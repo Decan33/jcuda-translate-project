@@ -13,103 +13,10 @@ import jcuda.driver.JCudaDriver;
 import static jcuda.driver.JCudaDriver.*;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator {
-    private static final String FUNCTION_NAME = "fourier";
+public class FourierCalculator implements FourierTest {
     private static final String KERNEL_PTX_FILENAME = "Fourier.ptx";
-    private static final int NUM_REPS = 20;
-    private static final int LENGTH = 1_000_000_000;
-    private static final int COEFFICIENTS = 1024;
-    private static final float TMIN = -3.0f;
-    private static final float TMAX = 3.0f;
-    private static final int THREADS_PER_BLOCK = 256;
 
-    public static void main(String[] args) {
-        // Cold run to warm up GPU
-        System.out.println("Performing cold run to warm up GPU...");
-        performColdRun();
-        System.out.println("Cold run completed.\n");
-        
-        var prepTimes = new double[NUM_REPS];
-        var kernelTimes = new double[NUM_REPS];
-        var deleteTimes = new double[NUM_REPS];
-
-        var startWholeTime = System.nanoTime();
-        
-        for (var rep = 0; rep < NUM_REPS; rep++) {
-            var prepStart = System.nanoTime();
-
-            JCudaDriver.setExceptionsEnabled(true);
-            cuInit(0);
-
-            var device = new CUdevice();
-            cuDeviceGet(device, 0);
-
-            var context = new CUcontext();
-            cuCtxCreate(context, 0, device);
-
-            var delta = (TMAX - TMIN) / (LENGTH - 1);
-            var deviceResults = new CUdeviceptr();
-            cuMemAlloc(deviceResults, (long)LENGTH * Sizeof.FLOAT);
-
-            var module = new CUmodule();
-            cuModuleLoad(module, KERNEL_PTX_FILENAME);
-
-            var function = new CUfunction();
-            cuModuleGetFunction(function, module, FUNCTION_NAME);
-
-            var kernelParameters = Pointer.to(
-                Pointer.to(new float[]{TMIN}),
-                Pointer.to(new float[]{delta}),
-                Pointer.to(new int[]{LENGTH}),
-                Pointer.to(new int[]{COEFFICIENTS}),
-                Pointer.to(deviceResults)
-            );
-
-            var blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-            var prepEnd = System.nanoTime();
-            prepTimes[rep] = (prepEnd - prepStart) / 1e9;
-            
-            var kernelStart = new CUevent();
-            var kernelStop = new CUevent();
-
-            cuEventCreate(kernelStart, 0);
-            cuEventCreate(kernelStop, 0);
-            cuEventRecord(kernelStart, null);
-            cuLaunchKernel(function,
-                blocksPerGrid, 1, 1,
-                THREADS_PER_BLOCK, 1, 1,
-                0, null,
-                kernelParameters, null
-            );
-
-            cuEventRecord(kernelStop, null);
-            cuEventSynchronize(kernelStop);
-
-            var kernelMs = new float[1];
-            cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
-
-            kernelTimes[rep] = kernelMs[0] / 1000.0;
-            
-            cuEventDestroy(kernelStart);
-            cuEventDestroy(kernelStop);
-
-            var deleteStart = System.nanoTime();
-            var hostResults = new float[LENGTH];
-
-            cuMemcpyDtoH(Pointer.to(hostResults), deviceResults, (long)LENGTH * Sizeof.FLOAT);
-            cuMemFree(deviceResults);
-            cuCtxDestroy(context);
-
-            var deleteEnd = System.nanoTime();
-            deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
-        }
-        
-        var endWholeTime = System.nanoTime();
-
-        logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
-    }
-
-    private static void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
         for (var i = 0; i < prep.length; i++) {
             System.out.printf("Repetition %d:\n", i + 1);
             System.out.printf("  Preparation time: %.6f s\n", prep[i]);
@@ -132,19 +39,19 @@ public class FourierCalculator {
         System.out.println("=========================");
     }
 
-    private static double mean(double[] arr) {
+    private double mean(double[] arr) {
         var sum = 0.0;
         for (var v : arr) sum += v;
         return sum / arr.length;
     }
 
-    private static double standardDeviation(double[] arr, double mean) {
+    private double standardDeviation(double[] arr, double mean) {
         var sum = 0.0;
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
     }
     
-    private static void performColdRun() {
+    private void performColdRun() {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
 
@@ -164,11 +71,19 @@ public class FourierCalculator {
         var function = new CUfunction();
         cuModuleGetFunction(function, module, FUNCTION_NAME);
 
+        float pi = (float)Math.PI;
+        float T = TMAX - TMIN;
+        float pi_over_T = pi / T;
+        float result_coefficient = 4.0f / (pi * pi);
         var kernelParameters = Pointer.to(
             Pointer.to(new float[]{TMIN}),
             Pointer.to(new float[]{delta}),
             Pointer.to(new int[]{LENGTH}),
             Pointer.to(new int[]{COEFFICIENTS}),
+            Pointer.to(new float[]{pi}),
+            Pointer.to(new float[]{pi_over_T}),
+            Pointer.to(new float[]{result_coefficient}),
+            Pointer.to(new float[]{T}),
             Pointer.to(deviceResults)
         );
 
@@ -189,5 +104,100 @@ public class FourierCalculator {
         // Cleanup
         cuMemFree(deviceResults);
         cuCtxDestroy(context);
+    }
+
+    @Override
+    public void runTest() {
+        // Cold run to warm up GPU
+        System.out.println("Performing cold run to warm up GPU...");
+        performColdRun();
+        System.out.println("Cold run completed.\n");
+
+        var prepTimes = new double[NUM_REPS];
+        var kernelTimes = new double[NUM_REPS];
+        var deleteTimes = new double[NUM_REPS];
+
+        var startWholeTime = System.nanoTime();
+
+        for (var rep = 0; rep < NUM_REPS; rep++) {
+            var prepStart = System.nanoTime();
+
+            JCudaDriver.setExceptionsEnabled(true);
+            cuInit(0);
+
+            var device = new CUdevice();
+            cuDeviceGet(device, 0);
+
+            var context = new CUcontext();
+            cuCtxCreate(context, 0, device);
+
+            var delta = (TMAX - TMIN) / (LENGTH - 1);
+            var deviceResults = new CUdeviceptr();
+            cuMemAlloc(deviceResults, (long)LENGTH * Sizeof.FLOAT);
+
+            var module = new CUmodule();
+            cuModuleLoad(module, KERNEL_PTX_FILENAME);
+
+            var function = new CUfunction();
+            cuModuleGetFunction(function, module, FUNCTION_NAME);
+
+            float pi = (float)Math.PI;
+            float T = TMAX - TMIN;
+            float pi_over_T = pi / T;
+            float result_coefficient = 4.0f / (pi * pi);
+            var kernelParameters = Pointer.to(
+                Pointer.to(new float[]{TMIN}),
+                Pointer.to(new float[]{delta}),
+                Pointer.to(new int[]{LENGTH}),
+                Pointer.to(new int[]{COEFFICIENTS}),
+                Pointer.to(new float[]{pi}),
+                Pointer.to(new float[]{pi_over_T}),
+                Pointer.to(new float[]{result_coefficient}),
+                Pointer.to(new float[]{T}),
+                Pointer.to(deviceResults)
+            );
+
+            var blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            var prepEnd = System.nanoTime();
+            prepTimes[rep] = (prepEnd - prepStart) / 1e9;
+
+            var kernelStart = new CUevent();
+            var kernelStop = new CUevent();
+
+            cuEventCreate(kernelStart, 0);
+            cuEventCreate(kernelStop, 0);
+            cuEventRecord(kernelStart, null);
+            cuLaunchKernel(function,
+                    blocksPerGrid, 1, 1,
+                    THREADS_PER_BLOCK, 1, 1,
+                    0, null,
+                    kernelParameters, null
+            );
+
+            cuEventRecord(kernelStop, null);
+            cuEventSynchronize(kernelStop);
+
+            var kernelMs = new float[1];
+            cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
+
+            kernelTimes[rep] = kernelMs[0] / 1000.0;
+
+            cuEventDestroy(kernelStart);
+            cuEventDestroy(kernelStop);
+
+            var deleteStart = System.nanoTime();
+            var hostResults = new float[LENGTH];
+
+            cuMemcpyDtoH(Pointer.to(hostResults), deviceResults, (long)LENGTH * Sizeof.FLOAT);
+            cuMemFree(deviceResults);
+            cuCtxDestroy(context);
+
+            var deleteEnd = System.nanoTime();
+            deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
+        }
+
+        var endWholeTime = System.nanoTime();
+
+        logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 }

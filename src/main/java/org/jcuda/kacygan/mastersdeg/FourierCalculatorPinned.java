@@ -9,27 +9,33 @@ import jcuda.driver.CUevent;
 import jcuda.driver.CUfunction;
 import jcuda.driver.CUmodule;
 import jcuda.driver.JCudaDriver;
-import static jcuda.driver.JCudaDriver.*;
-import static jcuda.runtime.JCuda.cudaHostAlloc;
+
+import static jcuda.driver.JCudaDriver.cuCtxCreate;
+import static jcuda.driver.JCudaDriver.cuCtxDestroy;
+import static jcuda.driver.JCudaDriver.cuDeviceGet;
+import static jcuda.driver.JCudaDriver.cuEventCreate;
+import static jcuda.driver.JCudaDriver.cuEventDestroy;
+import static jcuda.driver.JCudaDriver.cuEventElapsedTime;
+import static jcuda.driver.JCudaDriver.cuEventRecord;
+import static jcuda.driver.JCudaDriver.cuEventSynchronize;
+import static jcuda.driver.JCudaDriver.cuInit;
+import static jcuda.driver.JCudaDriver.cuLaunchKernel;
+import static jcuda.driver.JCudaDriver.cuMemAlloc;
+import static jcuda.driver.JCudaDriver.cuMemFree;
+import static jcuda.driver.JCudaDriver.cuMemcpyDtoH;
+import static jcuda.driver.JCudaDriver.cuModuleGetFunction;
+import static jcuda.driver.JCudaDriver.cuModuleLoad;
 import static jcuda.runtime.JCuda.cudaFreeHost;
+import static jcuda.runtime.JCuda.cudaHostAlloc;
 import static jcuda.runtime.JCuda.cudaHostAllocDefault;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculatorPinned {
-    private static final String FUNCTION_NAME = "fourier";
+public class FourierCalculatorPinned implements FourierTest{
     private static final String KERNEL_PTX_FILENAME = "Fourier.ptx";
-    private static final int NUM_REPS = 20;
-    private static final int LENGTH = 2_000_000_000;
-    private static final int COEFFICIENTS = 1024;
-    private static final float TMIN = -3.0f;
-    private static final float TMAX = 3.0f;
-    private static final int THREADS_PER_BLOCK = 256;
     private static final int CHUNK_SIZE = 250_000_000;
 
-    public static void main(String[] args) {
+    @Override
+    public void runTest() {
         try {
             long requiredDeviceMemory = (long)LENGTH * Sizeof.FLOAT;
             long requiredHostMemory = (long)Math.min(CHUNK_SIZE, LENGTH) * Sizeof.FLOAT;
@@ -239,4 +245,4 @@ public class FourierCalculatorPinned {
             e.printStackTrace();
         }
     }
-} 
+}

@@ -1,16 +1,26 @@
+#include <cuda_runtime.h>
+#include <cmath>
+
 extern "C"
-__global__ void fourier(float tmin, float delta, int length, int coefficients, float *results)
+__global__ void fourier(
+    float tmin,
+    float delta,
+    int length,
+    int coefficients,
+    float pi,
+    float pi_over_T,
+    float result_coefficient,
+    float T,
+    float *results)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= length) return;
     float t = tmin + idx * delta;
     float sum = 0.0f;
-    const float pi = 3.14159265f;
-    for (int k = 1; k <= coefficients; ++k)
-    {
-        float angle = (2 * k - 1) * pi * t;
-        sum += cosf(angle) / (4.0f * k * k - 4.0f * k + 1.0f);
+    for (int k = 1; k <= coefficients; ++k) {
+        float angle = (2 * k - 1) * pi_over_T * t;
+        float denominator = 4.0f * k * k - 4.0f * k + 1.0f;
+        sum += cosf(angle) / denominator;
     }
-    float pi_sq = pi * pi;
-    results[idx] = 0.5f - (4.0f * sum) / pi_sq;
+    results[idx] = T * 0.5f - result_coefficient * sum;
 }

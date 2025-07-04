@@ -1,15 +1,12 @@
 #include <iostream>
-// #include <fstream>
 #include <cmath>
 #include <cuda_runtime.h>
 #include <string>
 #include <vector>
 #include <chrono>
+#include "data.h"
 
-constexpr int THREADS_PER_BLOCK = 256;
-constexpr int NUM_REPS = 5;
-
-__global__ void computeKernel(
+__global__ void fourier(
     float tmin,
     float delta,
     int length,
@@ -40,13 +37,11 @@ void performColdRun(float tmin, float delta, int length, int coefficients,
     auto threadsPerBlock = THREADS_PER_BLOCK;
     auto blocksPerGrid = (length + threadsPerBlock - 1) / threadsPerBlock;
 
-    // Execute kernel without timing
-    computeKernel<<<blocksPerGrid, threadsPerBlock>>>(
+    fourier<<<blocksPerGrid, threadsPerBlock>>>(
         tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T, d_results
     );
     cudaDeviceSynchronize();
 
-    // Copy results without timing
     float *h_results = new float[length];
     cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -55,24 +50,13 @@ void performColdRun(float tmin, float delta, int length, int coefficients,
 }
 
 int main() {
-    constexpr float tmin = -3.0f;
-    constexpr float tmax = 3.0f;
-    constexpr int length = 2000000000;
-    constexpr int coefficients = 1024;
-    constexpr float T = 1.0f;
-    constexpr float delta = (tmax - tmin) / (length - 1);
-    constexpr float pi = 3.14159265f;
-    constexpr float pi_sq = pi * pi;
-    constexpr float pi_over_T = pi / T;
-    constexpr float result_coefficient = (4.0f * T) / pi_sq;
-
-    // Cold run to warm up GPU
     printf("Performing cold run to warm up GPU...\n");
     performColdRun(tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T);
     printf("Cold run completed.\n\n");
 
     std::vector<double> prep_times, kernel_times, delete_times;
-    
+
+    auto start_reps = std::chrono::high_resolution_clock::now();
     for (auto rep = 0; rep < NUM_REPS; ++rep) {
         auto prep_start = std::chrono::high_resolution_clock::now();
         
@@ -90,7 +74,7 @@ int main() {
         cudaEventCreate(&kernel_stop);
         cudaEventRecord(kernel_start);
 
-        computeKernel<<<blocksPerGrid, threadsPerBlock>>>(
+        fourier<<<blocksPerGrid, threadsPerBlock>>>(
             tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T, d_results
         );
         cudaDeviceSynchronize();
@@ -117,6 +101,7 @@ int main() {
 
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
     }
+    auto end_reps = std::chrono::high_resolution_clock::now();
     
     double prep_sum = 0, kernel_sum = 0, delete_sum = 0;
     
@@ -151,6 +136,7 @@ int main() {
     printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prep_avg, prep_std);
     printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernel_avg, kernel_std);
     printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delete_avg, delete_std);
+    printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
     return 0;
 }

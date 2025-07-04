@@ -3,11 +3,7 @@
 #include <cmath>
 #include <vector>
 #include <chrono>
-// #include <fstream>
-
-constexpr int THREADS_PER_BLOCK = 256;
-constexpr int MAX_COEFFICIENTS = 1024;
-constexpr int NUM_REPS = 20;
+#include "data.h"
 
 __constant__ float const_tmin;
 __constant__ float const_delta;
@@ -19,7 +15,7 @@ __constant__ float const_T;
 __constant__ float const_pi_over_T;
 __constant__ float constant_result_coefficient;
 
-__global__ void computeKernel(float* results)
+__global__ void fourier(float* results)
 {
     __shared__ float shared_coefficients[MAX_COEFFICIENTS];
 
@@ -55,12 +51,6 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
 
     auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-    constexpr float pi = 3.14159265f;
-    constexpr float pi_squared = pi * pi;
-    constexpr float T = 1.0f;
-    constexpr float pi_over_T = pi / T;
-    constexpr float host_result_coefficient = (4.0f * T) / pi_squared;
-
     cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
     cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
     cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
@@ -69,13 +59,11 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
     cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
     cudaMemcpyToSymbol(const_T, &T, sizeof(float));
     cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-    cudaMemcpyToSymbol(constant_result_coefficient, &host_result_coefficient, sizeof(float));
+    cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
 
-    // Execute kernel without timing
-    computeKernel<<<blocks, THREADS_PER_BLOCK>>>(result_device);
+    fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
     cudaDeviceSynchronize();
 
-    // Copy results without timing
     float* result_host;
     cudaMallocHost((void**)&result_host, length * sizeof(float));
     cudaMemcpy(result_host, result_device, length * sizeof(float), cudaMemcpyDeviceToHost);
@@ -85,12 +73,6 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
 
 int main()
 {
-    constexpr float tmin = -3.0f;
-    constexpr float tmax = 3.0f;
-    constexpr int length = 2000000000;
-    constexpr int coefficients = 1024;
-    constexpr float delta = (tmax - tmin) / (length - 1);
-
     // Cold run to warm up GPU
     printf("Performing cold run to warm up GPU...\n");
     performColdRun(tmin, tmax, length, coefficients, delta);
@@ -107,12 +89,6 @@ int main()
 
         auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        constexpr float pi = 3.14159265f;
-        constexpr float pi_squared = pi * pi;
-        constexpr float T = 1.0f;
-        constexpr float pi_over_T = pi / T;
-        constexpr float host_result_coefficient = (4.0f * T) / pi_squared;
-
         cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
         cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
         cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
@@ -121,7 +97,7 @@ int main()
         cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
         cudaMemcpyToSymbol(const_T, &T, sizeof(float));
         cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-        cudaMemcpyToSymbol(constant_result_coefficient, &host_result_coefficient, sizeof(float));
+        cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
 
         auto prep_end = std::chrono::high_resolution_clock::now();
         prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
@@ -131,7 +107,7 @@ int main()
         cudaEventCreate(&kernel_stop);
         cudaEventRecord(kernel_start);
         
-        computeKernel<<<blocks, THREADS_PER_BLOCK>>>(result_device);
+        fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
         cudaDeviceSynchronize();
         cudaEventRecord(kernel_stop);
         cudaEventSynchronize(kernel_stop);
@@ -188,7 +164,7 @@ int main()
     printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prep_avg, prep_std);
     printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernel_avg, kernel_std);
     printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delete_avg, delete_std);
-    printf("  Whole time taken for %d reps: %.6f\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
+    printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
     return 0;
 } 

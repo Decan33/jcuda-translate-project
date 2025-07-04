@@ -4,6 +4,7 @@
 #include <fstream>
 #include <vector>
 #include <chrono>
+#include "data.h"
 
 #define CUDA_CHECK(call) \
     do { \
@@ -14,10 +15,7 @@
         } \
     } while (0)
 
-constexpr int MAX_COEFFICIENTS = 1024;
-constexpr int THREADS_PER_BLOCK = 256;
 constexpr int CHUNK_SIZE = 10000000;
-constexpr int NUM_REPS = 5;
 
 __constant__ float d_coefficients[MAX_COEFFICIENTS];
 __constant__ float d_params[5];  // [tmin, tmax, length, coefficients, delta]
@@ -78,26 +76,19 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
         CUDA_CHECK(cudaMemcpy(h_results, d_results, thisChunkSize * sizeof(float), cudaMemcpyDeviceToHost));
     }
 
-    // Cleanup
     CUDA_CHECK(cudaFree(d_results));
     CUDA_CHECK(cudaFreeHost(h_results));
 }
 
 int main()
 {
-    constexpr float tmin = -3.0f;
-    constexpr float tmax = 3.0f;
-    constexpr int length = 200000000;
-    constexpr int coefficients = 1024;
-    constexpr float delta = (tmax - tmin) / (length - 1);
-    
-    // Cold run to warm up GPU
     printf("Performing cold run to warm up GPU...\n");
     performColdRun(tmin, tmax, length, coefficients, delta);
     printf("Cold run completed.\n\n");
     
     std::vector<double> prep_times, kernel_times, delete_times;
-    
+
+    auto start_reps = std::chrono::high_resolution_clock::now();
     for (auto rep = 0; rep < NUM_REPS; rep++) {
         auto prep_start = std::chrono::high_resolution_clock::now();
         
@@ -149,6 +140,7 @@ int main()
         auto delete_end = std::chrono::high_resolution_clock::now();
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
     }
+    auto end_reps = std::chrono::high_resolution_clock::now();
 
     double prep_sum = 0, kernel_sum = 0, delete_sum = 0;
     printf("\n===== Timing Summary =====\n");
@@ -167,6 +159,7 @@ int main()
     printf("  Avg preparation time: %.6f s\n", prep_sum / prep_times.size());
     printf("  Avg kernel execution time: %.6f s\n", kernel_sum / kernel_times.size());
     printf("  Avg memory deletion time: %.6f s\n", delete_sum / delete_times.size());
+    printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
     return 0;
 }

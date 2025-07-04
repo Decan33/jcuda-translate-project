@@ -14,19 +14,13 @@ import jcuda.driver.JCudaDriver;
 import static jcuda.driver.JCudaDriver.*;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator4 {
+public class FourierCalculator4 implements FourierTest {
     //Fourier: streams version
-    private static final String PTX_FILENAME = "Fourier.ptx";
-    private static final String FUNCTION_NAME = "fourier";
-    private static final int NUM_REPS = 20;
+    private static final String PTX_FILENAME = "Fourier3.ptx";
     private static final int NUM_STREAMS = 4;
-    private static final int LENGTH = 1_000_000_000;
-    private static final int COEFFICIENTS = 1024;
-    private static final float TMIN = -3.0f;
-    private static final float TMAX = 3.0f;
-    private static final int THREADS_PER_BLOCK = 256;
 
-    public static void main(String[] args) {
+    @Override
+    public void runTest() {
         // Cold run to warm up GPU
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
@@ -87,12 +81,22 @@ public class FourierCalculator4 {
                 hostResults[i] = new float[currentChunkSize];
 
                 var chunkTmin = TMIN + startIdx * delta;
+                float pi = (float)Math.PI;
+                float T = TMAX - TMIN;
+                float pi_over_T = pi / T;
+                float result_coefficient = 4.0f / (pi * pi);
                 var kernelParameters = Pointer.to(
                     Pointer.to(new float[]{chunkTmin}),
                     Pointer.to(new float[]{delta}),
-                    Pointer.to(new int[]{currentChunkSize}),
+                    Pointer.to(new int[]{LENGTH}),
                     Pointer.to(new int[]{COEFFICIENTS}),
-                    Pointer.to(deviceResults[i])
+                    Pointer.to(new float[]{pi}),
+                    Pointer.to(new float[]{pi_over_T}),
+                    Pointer.to(new float[]{result_coefficient}),
+                    Pointer.to(new float[]{T}),
+                    Pointer.to(deviceResults[i]),
+                    Pointer.to(new int[]{startIdx}),
+                    Pointer.to(new int[]{currentChunkSize})
                 );
 
                 var blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
@@ -138,7 +142,7 @@ public class FourierCalculator4 {
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private static void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
         for (var i = 0; i < prep.length; i++) {
             System.out.printf("Repetition %d:\n", i + 1);
             System.out.printf("  Preparation time: %.6f s\n", prep[i]);
@@ -160,19 +164,19 @@ public class FourierCalculator4 {
         System.out.println("=========================");
     }
 
-    private static double mean(double[] arr) {
+    private double mean(double[] arr) {
         var sum = 0.0;
         for (var v : arr) sum += v;
         return sum / arr.length;
     }
 
-    private static double standardDeviation(double[] arr, double mean) {
+    private double standardDeviation(double[] arr, double mean) {
         var sum = 0.0;
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
     }
     
-    private static void performColdRun() {
+    private void performColdRun() {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
 
@@ -209,12 +213,22 @@ public class FourierCalculator4 {
             hostResults[i] = new float[currentChunkSize];
 
             var chunkTmin = TMIN + startIdx * delta;
+            float pi = (float)Math.PI;
+            float T = TMAX - TMIN;
+            float pi_over_T = pi / T;
+            float result_coefficient = 4.0f / (pi * pi);
             var kernelParameters = Pointer.to(
                 Pointer.to(new float[]{chunkTmin}),
                 Pointer.to(new float[]{delta}),
-                Pointer.to(new int[]{currentChunkSize}),
+                Pointer.to(new int[]{LENGTH}),
                 Pointer.to(new int[]{COEFFICIENTS}),
-                Pointer.to(deviceResults[i])
+                Pointer.to(new float[]{pi}),
+                Pointer.to(new float[]{pi_over_T}),
+                Pointer.to(new float[]{result_coefficient}),
+                Pointer.to(new float[]{T}),
+                Pointer.to(deviceResults[i]),
+                Pointer.to(new int[]{startIdx}),
+                Pointer.to(new int[]{currentChunkSize})
             );
 
             var blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;

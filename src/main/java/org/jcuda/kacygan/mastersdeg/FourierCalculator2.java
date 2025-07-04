@@ -29,18 +29,11 @@ import static jcuda.driver.JCudaDriver.cuEventSynchronize;
 import static jcuda.driver.JCudaDriver.cuEventDestroy;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator2 {
-    private static final String FUNCTION_NAME = "fourier";
+public class FourierCalculator2 implements FourierTest {
     private static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
-    private static final int NUM_REPS = 20;
-    private static final int LENGTH = 1_000_000_000;
-    private static final int COEFFICIENTS = 1024;
-    private static final float TMIN = -3.0f;
-    private static final float TMAX = 3.0f;
-    private static final int THREADS_PER_BLOCK = 256;
-    public static final double THOUSAND = 1000.0;
 
-    public static void main(String[] args) {
+    @Override
+    public void runTest() {
         // Cold run to warm up GPU
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
@@ -124,7 +117,7 @@ public class FourierCalculator2 {
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private static void setAllConstants(float delta, CUmodule module) {
+    private void setAllConstants(float delta, CUmodule module) {
         setConstant(module, "const_tmin", TMIN);
         setConstant(module, "const_delta", delta);
         setConstant(module, "const_coefficients", COEFFICIENTS);
@@ -135,7 +128,7 @@ public class FourierCalculator2 {
         setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
     }
 
-    private static void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
         for (var i = 0; i < prep.length; i++) {
             System.out.printf("Repetition %d:\n", i + 1);
             System.out.printf("  Preparation time: %.6f s\n", prep[i]);
@@ -158,31 +151,31 @@ public class FourierCalculator2 {
         System.out.println("=========================");
     }
 
-    private static double mean(double[] arr) {
+    private double mean(double[] arr) {
         var sum = 0.0;
         for (var v : arr) sum += v;
         return sum / arr.length;
     }
 
-    private static double standardDeviation(double[] arr, double mean) {
+    private double standardDeviation(double[] arr, double mean) {
         var sum = 0.0;
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
     }
 
-    private static void setConstant(CUmodule module, String name, float value) {
+    private void setConstant(CUmodule module, String name, float value) {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
         cuMemcpyHtoD(ptr, Pointer.to(new float[]{value}), Sizeof.FLOAT);
     }
 
-    private static void setConstant(CUmodule module, String name, int value) {
+    private void setConstant(CUmodule module, String name, int value) {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
         cuMemcpyHtoD(ptr, Pointer.to(new int[]{value}), Sizeof.INT);
     }
 
-    private static void performColdRun() {
+    private void performColdRun() {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
 

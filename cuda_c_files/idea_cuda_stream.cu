@@ -1,16 +1,12 @@
 #include <iostream>
-// #include <fstream>
 #include <cmath>
 #include <cuda_runtime.h>
 #include <vector>
 #include <chrono>
 #include <cstring>
+#include "data.h"
 
-constexpr int THREADS_PER_BLOCK = 256;
-constexpr int MAX_COEFFICIENTS = 1024;
-constexpr int NUM_STREAMS = 4;
 constexpr int BATCH_SIZE = 16 * 1024 * 1024;
-constexpr int NUM_REPS = 5;
 
 static void HandleError(cudaError_t err, const char *file, int line) {
     if (err != cudaSuccess) {
@@ -20,7 +16,7 @@ static void HandleError(cudaError_t err, const char *file, int line) {
 }
 #define HANDLE_ERROR(err) (HandleError(err, __FILE__, __LINE__))
 
-__global__ void computeKernel(
+__global__ void fourier(
     float tmin,
     float delta,
     int length,
@@ -71,7 +67,7 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
             auto current_batch_size = (global_offset + BATCH_SIZE > length) ? (length - global_offset) : BATCH_SIZE;
             auto buf = batch % 2;
             auto blocksPerGrid = (current_batch_size + threadsPerBlock - 1) / threadsPerBlock;
-            computeKernel<<<blocksPerGrid, threadsPerBlock, 0, streams[s]>>>(
+            fourier<<<blocksPerGrid, threadsPerBlock, 0, streams[s]>>>(
                 tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T,
                 d_results[s][buf], global_offset, current_batch_size
             );
@@ -127,13 +123,13 @@ int main() {
     constexpr float pi_over_T = pi / T;
     constexpr float result_coefficient = (4.0f * T) / pi_sq;
 
-    // Cold run to warm up GPU
     printf("Performing cold run to warm up GPU...\n");
     performColdRun(tmin, tmax, length, coefficients, T, delta, pi, pi_over_T, result_coefficient);
     printf("Cold run completed.\n\n");
 
     std::vector<double> prep_times, kernel_times, delete_times;
-    
+
+    auto start_reps = std::chrono::high_resolution_clock::now();
     for (auto rep = 0; rep < NUM_REPS; ++rep) {
         auto prep_start = std::chrono::high_resolution_clock::now();
         
@@ -173,7 +169,7 @@ int main() {
                 auto buf = batch % 2;
                 auto blocksPerGrid = (current_batch_size + threadsPerBlock - 1) / threadsPerBlock;
                 
-                computeKernel<<<blocksPerGrid, threadsPerBlock, 0, streams[s]>>>(
+                fourier<<<blocksPerGrid, threadsPerBlock, 0, streams[s]>>>(
                     tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T,
                     d_results[s][buf], global_offset, current_batch_size
                 );
@@ -235,6 +231,7 @@ int main() {
         auto delete_end = std::chrono::high_resolution_clock::now();
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
     }
+    auto end_reps = std::chrono::high_resolution_clock::now();
     
     double prep_sum = 0, kernel_sum = 0, delete_sum = 0;
     printf("\n===== Timing Summary =====\n");
@@ -269,6 +266,7 @@ int main() {
     printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prep_avg, prep_std);
     printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernel_avg, kernel_std);
     printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delete_avg, delete_std);
+    printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
     return 0;
 }

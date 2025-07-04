@@ -39,20 +39,14 @@ import java.io.PrintWriter;
 import java.util.Locale;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator3 {
-    public static final double THOUSAND = 1000.0;
+public class FourierCalculator3 implements FourierTest {
     //Fourier: Streams + shared version
-    private static final String PTX_FILENAME = "Fourier2.ptx";
-    private static final String FUNCTION_NAME = "fourier";
-    private static final int NUM_REPS = 20;
+    private static final String PTX_FILENAME = "Fourier4.ptx";
     private static final int NUM_STREAMS = 4;
-    private static final int LENGTH = 1_000_000_000;
-    private static final int COEFFICIENTS = 1024;
-    private static final float TMIN = -3.0f;
-    private static final float TMAX = 3.0f;
-    private static final int THREADS_PER_BLOCK = 256;
 
-    public static void main(String[] args) {
+
+    @Override
+    public void runTest() {
         // Cold run to warm up GPU
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
@@ -85,24 +79,23 @@ public class FourierCalculator3 {
             var function = new CUfunction();
             cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-            setConstant(module, "const_delta", delta);
-            setConstant(module, "const_coefficients", COEFFICIENTS);
-            setConstant(module, "const_pi", (float) Math.PI);
-            setConstant(module, "const_pi_squared", (float) (Math.PI * Math.PI));
-            setConstant(module, "const_T", 1.0f);
-            setConstant(module, "const_pi_over_T", (float) (Math.PI));
-            setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
+
 
             var streams = new CUstream[NUM_STREAMS];
             var deviceChunks = new CUdeviceptr[NUM_STREAMS];
-            var hostChunks = new float[NUM_STREAMS][chunkSize];
+            var hostChunks = new float[NUM_STREAMS][];
             
             for (var i = 0; i < NUM_STREAMS; i++) {
                 streams[i] = new CUstream();
                 cuStreamCreate(streams[i], 0);
 
+                var startIdx = i * chunkSize;
+                var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+                var currentChunkSize = endIdx - startIdx;
+                
                 deviceChunks[i] = new CUdeviceptr();
-                cuMemAlloc(deviceChunks[i], chunkSize * Sizeof.FLOAT);
+                cuMemAlloc(deviceChunks[i], currentChunkSize * Sizeof.FLOAT);
+                hostChunks[i] = new float[currentChunkSize];
             }
 
             var prepEnd = System.nanoTime();
@@ -115,20 +108,41 @@ public class FourierCalculator3 {
             cuEventRecord(kernelStart, null);
 
             for (var i = 0; i < NUM_STREAMS; i++) {
-                var offset = i * chunkSize;
-                var tminChunk = TMIN + offset * delta;
-                setConstant(module, "const_tmin", tminChunk);
-                setConstant(module, "const_chunk_size", chunkSize);
-                var kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
+                var startIdx = i * chunkSize;
+                var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+                var currentChunkSize = endIdx - startIdx;
+                
+                // Set up constant memory for the kernel
+                setConstant(module, "d_params", new float[]{
+                    TMIN + startIdx * delta,  // tmin
+                    TMAX,                     // tmax
+                    LENGTH,                   // length
+                    COEFFICIENTS,             // coefficients
+                    delta                     // delta
+                });
+                
+                // Set up coefficients in constant memory
+                var coefficients = new float[COEFFICIENTS];
+                for (int k = 0; k < COEFFICIENTS; k++) {
+                    coefficients[k] = 1.0f / (4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f);
+                }
+                setConstant(module, "d_coefficients", coefficients);
+                
+                var kernelParams = Pointer.to(
+                    Pointer.to(new int[]{startIdx}),
+                    Pointer.to(new int[]{endIdx}),
+                    Pointer.to(deviceChunks[i])
+                );
 
-                var blocks = (chunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+                var blocks = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+                var sharedMemSize = COEFFICIENTS * Sizeof.FLOAT;
                 cuLaunchKernel(function,
                     blocks, 1, 1,
                     THREADS_PER_BLOCK, 1, 1,
-                    0, streams[i],
+                    sharedMemSize, streams[i],
                     kernelParams, null);
                 cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                    chunkSize * Sizeof.FLOAT, streams[i]);
+                    currentChunkSize * Sizeof.FLOAT, streams[i]);
             }
             
             for (var stream : streams) {
@@ -164,7 +178,7 @@ public class FourierCalculator3 {
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private static void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
         for (var i = 0; i < prep.length; i++) {
             System.out.printf("Repetition %d:\n", i + 1);
             System.out.printf("  Preparation time: %.6f s\n", prep[i]);
@@ -188,43 +202,37 @@ public class FourierCalculator3 {
         System.out.println("=========================");
     }
 
-    private static double mean(double[] arr) {
+    private double mean(double[] arr) {
         var sum = 0.0;
         for (var v : arr) sum += v;
         return sum / arr.length;
     }
 
-    private static double stddev(double[] arr, double mean) {
+    private double stddev(double[] arr, double mean) {
         var sum = 0.0;
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
     }
 
-    private static void setConstant(CUmodule module, String name, float value) {
+    private void setConstant(CUmodule module, String name, float value) {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
         cuMemcpyHtoD(ptr, Pointer.to(new float[]{value}), Sizeof.FLOAT);
     }
 
-    private static void setConstant(CUmodule module, String name, int value) {
+    private void setConstant(CUmodule module, String name, int value) {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
         cuMemcpyHtoD(ptr, Pointer.to(new int[]{value}), Sizeof.INT);
     }
-
-    private static void writeResultsToCSV(String filename, float tmin, float delta, float[] results) {
-        try (PrintWriter writer = new PrintWriter(new FileWriter(filename))) {
-            writer.println("t,f");
-            for (int i = 0; i < results.length; i++) {
-                float t = tmin + i * delta;
-                writer.printf(Locale.US, "%.6f,%.6f%n", t, results[i]);
-            }
-        } catch (IOException e) {
-            System.err.println("Error writing CSV: " + e.getMessage());
-        }
+    
+    private void setConstant(CUmodule module, String name, float[] values) {
+        CUdeviceptr ptr = new CUdeviceptr();
+        cuModuleGetGlobal(ptr, new long[1], module, name);
+        cuMemcpyHtoD(ptr, Pointer.to(values), values.length * Sizeof.FLOAT);
     }
     
-    private static void performColdRun() {
+    private void performColdRun() {
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
 
@@ -242,40 +250,60 @@ public class FourierCalculator3 {
         var function = new CUfunction();
         cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-        setConstant(module, "const_delta", delta);
-        setConstant(module, "const_coefficients", COEFFICIENTS);
-        setConstant(module, "const_pi", (float) Math.PI);
-        setConstant(module, "const_pi_squared", (float) (Math.PI * Math.PI));
-        setConstant(module, "const_T", 1.0f);
-        setConstant(module, "const_pi_over_T", (float) (Math.PI));
-        setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
+
 
         var streams = new CUstream[NUM_STREAMS];
         var deviceChunks = new CUdeviceptr[NUM_STREAMS];
-        var hostChunks = new float[NUM_STREAMS][chunkSize];
+        var hostChunks = new float[NUM_STREAMS][];
         for (var i = 0; i < NUM_STREAMS; i++) {
             streams[i] = new CUstream();
             cuStreamCreate(streams[i], 0);
 
+            var startIdx = i * chunkSize;
+            var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+            var currentChunkSize = endIdx - startIdx;
+            
             deviceChunks[i] = new CUdeviceptr();
-            cuMemAlloc(deviceChunks[i], chunkSize * Sizeof.FLOAT);
+            cuMemAlloc(deviceChunks[i], currentChunkSize * Sizeof.FLOAT);
+            hostChunks[i] = new float[currentChunkSize];
         }
 
         for (var i = 0; i < NUM_STREAMS; i++) {
-            var offset = i * chunkSize;
-            var tminChunk = TMIN + offset * delta;
-            setConstant(module, "const_tmin", tminChunk);
-            setConstant(module, "const_chunk_size", chunkSize);
-            var kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
+            var startIdx = i * chunkSize;
+            var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+            var currentChunkSize = endIdx - startIdx;
+            
+            // Set up constant memory for the kernel
+            setConstant(module, "d_params", new float[]{
+                TMIN + startIdx * delta,  // tmin
+                TMAX,                     // tmax
+                LENGTH,                   // length
+                COEFFICIENTS,             // coefficients
+                delta                     // delta
+            });
+            
+            // Set up coefficients in constant memory
+            var coefficients = new float[COEFFICIENTS];
+            for (int k = 0; k < COEFFICIENTS; k++) {
+                coefficients[k] = 1.0f / (4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f);
+            }
+            setConstant(module, "d_coefficients", coefficients);
+            
+            var kernelParams = Pointer.to(
+                Pointer.to(new int[]{startIdx}),
+                Pointer.to(new int[]{endIdx}),
+                Pointer.to(deviceChunks[i])
+            );
 
-            var blocks = (chunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            var blocks = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            var sharedMemSize = COEFFICIENTS * Sizeof.FLOAT;
             cuLaunchKernel(function,
                 blocks, 1, 1,
                 THREADS_PER_BLOCK, 1, 1,
-                0, streams[i],
+                sharedMemSize, streams[i],
                 kernelParams, null);
             cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                chunkSize * Sizeof.FLOAT, streams[i]);
+                currentChunkSize * Sizeof.FLOAT, streams[i]);
         }
         for (var stream : streams) {
             cuStreamSynchronize(stream);
