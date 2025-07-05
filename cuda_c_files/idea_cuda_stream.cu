@@ -98,7 +98,6 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
         std::memcpy(final_results + last_offset, h_results[s][last_buf], last_batch_size * sizeof(float));
     }
 
-    // Cleanup
     for (auto i = 0; i < NUM_STREAMS; ++i) {
         for (auto b = 0; b < 2; ++b) {
             cudaFree(d_results[i][b]);
@@ -237,10 +236,13 @@ int main() {
     printf("\n===== Timing Summary =====\n");
     
     for (auto i = 0u; i < prep_times.size(); ++i) {
-        printf("Repetition %u:\n", i + 1);
-        printf("  Preparation time: %.6f s\n", prep_times[i]);
-        printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
-        printf("  Memory deletion time: %.6f s\n", delete_times[i]);
+	    if(logReps) {
+	        printf("Repetition %u:\n", i + 1);
+        	printf("  Preparation time: %.6f s\n", prep_times[i]);
+        	printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
+        	printf("  Data copy time: %.6f s\n", copy_times[i]);
+        	printf("  Memory deletion time: %.6f s\n", delete_times[i]);
+	    }
         prep_sum += prep_times[i];
         kernel_sum += kernel_times[i];
         delete_sum += delete_times[i];

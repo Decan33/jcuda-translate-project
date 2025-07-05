@@ -34,7 +34,8 @@ public class FourierCalculator2 implements FourierTest {
 
     @Override
     public void runTest() {
-        // Cold run to warm up GPU
+        System.out.println("TESTING FOURIER WITH CONSTANTS AND SHARED MEMORY");
+
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
         System.out.println("Cold run completed.\n");
@@ -58,7 +59,6 @@ public class FourierCalculator2 implements FourierTest {
             var context = new CUcontext();
             cuCtxCreate(context, 0, device);
 
-            var delta = (TMAX - TMIN) / (LENGTH - 1);
             var deviceResults = new CUdeviceptr();
             cuMemAlloc(deviceResults, (long) LENGTH * Sizeof.FLOAT);
 
@@ -68,7 +68,7 @@ public class FourierCalculator2 implements FourierTest {
             var function = new CUfunction();
             cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-            setAllConstants(delta, module);
+            setAllConstants(module);
 
             var kernelParameters = Pointer.to(Pointer.to(deviceResults));
             var blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
@@ -117,24 +117,27 @@ public class FourierCalculator2 implements FourierTest {
         logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private void setAllConstants(float delta, CUmodule module) {
+    private void setAllConstants(CUmodule module) {
         setConstant(module, "const_tmin", TMIN);
-        setConstant(module, "const_delta", delta);
+        setConstant(module, "const_delta", DELTA);
         setConstant(module, "const_coefficients", COEFFICIENTS);
-        setConstant(module, "const_pi", (float) Math.PI);
-        setConstant(module, "const_pi_squared", (float) (Math.PI * Math.PI));
-        setConstant(module, "const_T", 1.0f);
-        setConstant(module, "const_pi_over_T", (float) (Math.PI));
-        setConstant(module, "constant_result_coefficient", (4.0f) / ((float) (Math.PI * Math.PI)));
+        setConstant(module, "const_pi", PI);
+        setConstant(module, "const_pi_squared", PI_SQUARED);
+        setConstant(module, "const_T", PERIOD);
+        setConstant(module, "const_pi_over_T", PI_OVER_T);
+        setConstant(module, "constant_result_coefficient", RESULT_COEFFICIENT);
     }
 
     private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
-        for (var i = 0; i < prep.length; i++) {
-            System.out.printf("Repetition %d:\n", i + 1);
-            System.out.printf("  Preparation time: %.6f s\n", prep[i]);
-            System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
-            System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+        if (logReps) {
+            for (var i = 0; i < prep.length; i++) {
+                System.out.printf("  Repetition %d:\n", i + 1);
+                System.out.printf("  Preparation time: %.6f s\n", prep[i]);
+                System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+            }
         }
+
         var n = prep.length;
         var prepAvg = mean(prep);
         var kernelAvg = mean(kernel);
@@ -185,7 +188,6 @@ public class FourierCalculator2 implements FourierTest {
         var context = new CUcontext();
         cuCtxCreate(context, 0, device);
 
-        var delta = (TMAX - TMIN) / (LENGTH - 1);
         var deviceResults = new CUdeviceptr();
         cuMemAlloc(deviceResults, (long) LENGTH * Sizeof.FLOAT);
 
@@ -195,12 +197,11 @@ public class FourierCalculator2 implements FourierTest {
         var function = new CUfunction();
         cuModuleGetFunction(function, module, FUNCTION_NAME);
 
-        setAllConstants(delta, module);
+        setAllConstants(module);
 
         var kernelParameters = Pointer.to(Pointer.to(deviceResults));
         var blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        // Execute kernel without timing
         cuLaunchKernel(function,
                 blocksPerGrid, 1, 1,
                 THREADS_PER_BLOCK, 1, 1,
@@ -208,11 +209,9 @@ public class FourierCalculator2 implements FourierTest {
                 kernelParameters, null
         );
 
-        // Copy results without timing
         var hostResults = new float[LENGTH];
         cuMemcpyDtoH(Pointer.to(hostResults), deviceResults, (long) LENGTH * Sizeof.FLOAT);
         
-        // Cleanup
         cuMemFree(deviceResults);
         cuCtxDestroy(context);
     }

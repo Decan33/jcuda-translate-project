@@ -21,7 +21,8 @@ public class FourierCalculator4 implements FourierTest {
 
     @Override
     public void runTest() {
-        // Cold run to warm up GPU
+        System.out.println("TESTING FOURIER WITH STREAMS");
+
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
         System.out.println("Cold run completed.\n");
@@ -43,8 +44,6 @@ public class FourierCalculator4 implements FourierTest {
 
             var context = new CUcontext();
             cuCtxCreate(context, 0, device);
-
-            var delta = (TMAX - TMIN) / (LENGTH - 1);
             
             var streams = new CUstream[NUM_STREAMS];
             for (var i = 0; i < NUM_STREAMS; i++) {
@@ -80,20 +79,16 @@ public class FourierCalculator4 implements FourierTest {
                 cuMemAlloc(deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
                 hostResults[i] = new float[currentChunkSize];
 
-                var chunkTmin = TMIN + startIdx * delta;
-                float pi = (float)Math.PI;
-                float T = TMAX - TMIN;
-                float pi_over_T = pi / T;
-                float result_coefficient = 4.0f / (pi * pi);
+                var chunkTmin = TMIN + startIdx * DELTA;
                 var kernelParameters = Pointer.to(
                     Pointer.to(new float[]{chunkTmin}),
-                    Pointer.to(new float[]{delta}),
+                    Pointer.to(new float[]{DELTA}),
                     Pointer.to(new int[]{LENGTH}),
                     Pointer.to(new int[]{COEFFICIENTS}),
-                    Pointer.to(new float[]{pi}),
-                    Pointer.to(new float[]{pi_over_T}),
-                    Pointer.to(new float[]{result_coefficient}),
-                    Pointer.to(new float[]{T}),
+                    Pointer.to(new float[]{PI}),
+                    Pointer.to(new float[]{PI_OVER_T}),
+                    Pointer.to(new float[]{RESULT_COEFFICIENT}),
+                    Pointer.to(new float[]{PERIOD}),
                     Pointer.to(deviceResults[i]),
                     Pointer.to(new int[]{startIdx}),
                     Pointer.to(new int[]{currentChunkSize})
@@ -143,12 +138,15 @@ public class FourierCalculator4 implements FourierTest {
     }
 
     private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
-        for (var i = 0; i < prep.length; i++) {
-            System.out.printf("Repetition %d:\n", i + 1);
-            System.out.printf("  Preparation time: %.6f s\n", prep[i]);
-            System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
-            System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+        if (logReps) {
+            for (var i = 0; i < prep.length; i++) {
+                System.out.printf("  Repetition %d:\n", i + 1);
+                System.out.printf("  Preparation time: %.6f s\n", prep[i]);
+                System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+            }
         }
+
         var n = prep.length;
         var prepAvg = mean(prep);
         var kernelAvg = mean(kernel);
@@ -156,6 +154,7 @@ public class FourierCalculator4 implements FourierTest {
         var prepStd = standardDeviation(prep, prepAvg);
         var kernelStd = standardDeviation(kernel, kernelAvg);
         var delStd = standardDeviation(del, delAvg);
+
         System.out.printf("\nAverages over %d repetitions:\n", n);
         System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
         System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
@@ -185,8 +184,6 @@ public class FourierCalculator4 implements FourierTest {
 
         var context = new CUcontext();
         cuCtxCreate(context, 0, device);
-
-        var delta = (TMAX - TMIN) / (LENGTH - 1);
         
         var streams = new CUstream[NUM_STREAMS];
         for (var i = 0; i < NUM_STREAMS; i++) {
@@ -212,20 +209,16 @@ public class FourierCalculator4 implements FourierTest {
             cuMemAlloc(deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
             hostResults[i] = new float[currentChunkSize];
 
-            var chunkTmin = TMIN + startIdx * delta;
-            float pi = (float)Math.PI;
-            float T = TMAX - TMIN;
-            float pi_over_T = pi / T;
-            float result_coefficient = 4.0f / (pi * pi);
+            var chunkTmin = TMIN + startIdx * DELTA;
             var kernelParameters = Pointer.to(
                 Pointer.to(new float[]{chunkTmin}),
-                Pointer.to(new float[]{delta}),
+                Pointer.to(new float[]{DELTA}),
                 Pointer.to(new int[]{LENGTH}),
                 Pointer.to(new int[]{COEFFICIENTS}),
-                Pointer.to(new float[]{pi}),
-                Pointer.to(new float[]{pi_over_T}),
-                Pointer.to(new float[]{result_coefficient}),
-                Pointer.to(new float[]{T}),
+                Pointer.to(new float[]{PI}),
+                Pointer.to(new float[]{PI_OVER_T}),
+                Pointer.to(new float[]{RESULT_COEFFICIENT}),
+                Pointer.to(new float[]{PERIOD}),
                 Pointer.to(deviceResults[i]),
                 Pointer.to(new int[]{startIdx}),
                 Pointer.to(new int[]{currentChunkSize})
@@ -246,7 +239,6 @@ public class FourierCalculator4 implements FourierTest {
             cuStreamSynchronize(stream);
         }
 
-        // Cleanup
         for (var i = 0; i < NUM_STREAMS; i++) {
             cuMemFree(deviceResults[i]);
             cuStreamDestroy(streams[i]);

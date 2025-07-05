@@ -29,29 +29,25 @@ __global__ void fourier(
     results[idx] = T * 0.5f - result_coefficient * sum;
 }
 
-void performColdRun(float tmin, float delta, int length, int coefficients, 
-                   float pi, float pi_over_T, float result_coefficient, float T) {
+int main() {
+    printf("TESTING IMPROVED RAW FOURIER (FIXED MEMORY MANAGEMENT)\n");
+    
     float *d_results;
     cudaMalloc(&d_results, length * sizeof(float));
-
+    float *h_results = new float[length];
+    
+    printf("Performing cold run to warm up GPU...\n");
+    
     auto threadsPerBlock = THREADS_PER_BLOCK;
     auto blocksPerGrid = (length + threadsPerBlock - 1) / threadsPerBlock;
-
+    
     fourier<<<blocksPerGrid, threadsPerBlock>>>(
         tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T, d_results
     );
     cudaDeviceSynchronize();
-
-    float *h_results = new float[length];
+    
     cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
-
-    delete[] h_results;
-    cudaFree(d_results);
-}
-
-int main() {
-    printf("Performing cold run to warm up GPU...\n");
-    performColdRun(tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T);
+    
     printf("Cold run completed.\n\n");
 
     std::vector<double> prep_times, kernel_times, copy_times, delete_times;
@@ -60,9 +56,6 @@ int main() {
     for (auto rep = 0; rep < NUM_REPS; ++rep) {
         auto prep_start = std::chrono::high_resolution_clock::now();
         
-        float *d_results;
-        cudaMalloc(&d_results, length * sizeof(float));
-
         auto threadsPerBlock = THREADS_PER_BLOCK;
         auto blocksPerGrid = (length + threadsPerBlock - 1) / threadsPerBlock;
         
@@ -90,30 +83,30 @@ int main() {
         cudaEventDestroy(kernel_stop);
 
         auto copy_start = std::chrono::high_resolution_clock::now();
-        float *h_results = new float[length];
         cudaMemcpy(h_results, d_results, length * sizeof(float), cudaMemcpyDeviceToHost);
         auto copy_end = std::chrono::high_resolution_clock::now();
         copy_times.push_back(std::chrono::duration<double>(copy_end - copy_start).count());
-
+        
         auto delete_start = std::chrono::high_resolution_clock::now();
-        delete[] h_results;
-        cudaFree(d_results);
         auto delete_end = std::chrono::high_resolution_clock::now();
 
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());
     }
     auto end_reps = std::chrono::high_resolution_clock::now();
     
+    delete[] h_results;
+    cudaFree(d_results);
+    
     double prep_sum = 0, kernel_sum = 0, copy_sum = 0, delete_sum = 0;
     
     for (auto i = 0u; i < prep_times.size(); ++i) {
-	    if(logReps) {
-	        printf("Repetition %u:\n", i + 1);
-        	printf("  Preparation time: %.6f s\n", prep_times[i]);
-        	printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
-        	printf("  Data copy time: %.6f s\n", copy_times[i]);
-        	printf("  Memory deletion time: %.6f s\n", delete_times[i]);
-	    }
+        if(logReps) {
+            printf("Repetition %u:\n", i + 1);
+            printf("  Preparation time: %.6f s\n", prep_times[i]);
+            printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
+            printf("  Data copy time: %.6f s\n", copy_times[i]);
+            printf("  Memory deletion time: %.6f s\n", delete_times[i]);
+        }
         prep_sum += prep_times[i];
         kernel_sum += kernel_times[i];
         copy_sum += copy_times[i];
@@ -147,4 +140,4 @@ int main() {
     printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
     return 0;
-}
+} 

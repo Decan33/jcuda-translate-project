@@ -43,7 +43,9 @@ public class FourierCalculatorPinned implements FourierTest{
             System.out.printf("Memory requirements: Device=%.2f GB, Host chunk=%.2f MB\n", 
                              requiredDeviceMemory / (1024.0 * 1024.0 * 1024.0),
                              requiredHostMemory / (1024.0 * 1024.0));
-            
+
+            System.out.println("TESTING FOURIER USING PINNED MEMORY");
+
             // Cold run to warm up GPU
             System.out.println("Performing cold run to warm up GPU...");
             performColdRun();
@@ -83,6 +85,10 @@ public class FourierCalculatorPinned implements FourierTest{
                     Pointer.to(new float[]{delta}),
                     Pointer.to(new int[]{LENGTH}),
                     Pointer.to(new int[]{COEFFICIENTS}),
+                    Pointer.to(new float[]{PI}),
+                    Pointer.to(new float[]{PI_OVER_T}),
+                    Pointer.to(new float[]{RESULT_COEFFICIENT}),
+                    Pointer.to(new float[]{PERIOD}),
                     Pointer.to(deviceResults)
                 );
                 
@@ -146,11 +152,13 @@ public class FourierCalculatorPinned implements FourierTest{
     }
 
     private static void logTimings(double[] prep, double[] kernel, double[] del, long wholeTime) {
-        for (int i = 0; i < prep.length; i++) {
-            System.out.printf("Repetition %d:\n", i + 1);
-            System.out.printf("  Preparation time: %.6f s\n", prep[i]);
-            System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
-            System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+        if (logReps) {
+            for (var i = 0; i < prep.length; i++) {
+                System.out.printf("  Repetition %d:\n", i + 1);
+                System.out.printf("  Preparation time: %.6f s\n", prep[i]);
+                System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+            }
         }
 
         int n = prep.length;
@@ -208,6 +216,10 @@ public class FourierCalculatorPinned implements FourierTest{
                 Pointer.to(new float[]{delta}),
                 Pointer.to(new int[]{LENGTH}),
                 Pointer.to(new int[]{COEFFICIENTS}),
+                Pointer.to(new float[]{PI}),
+                Pointer.to(new float[]{PI_OVER_T}),
+                Pointer.to(new float[]{RESULT_COEFFICIENT}),
+                Pointer.to(new float[]{PERIOD}),
                 Pointer.to(deviceResults)
             );
             

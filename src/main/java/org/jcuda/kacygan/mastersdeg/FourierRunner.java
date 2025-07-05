@@ -10,7 +10,8 @@ public class FourierRunner {
                 new FourierCalculator(),
                 new FourierCalculator2(),
                 new FourierCalculator3(),
-                new FourierCalculator4()
+                new FourierCalculator4(),
+                new FourierCalculatorPinned()
         );
 
         for (var test : tests) {

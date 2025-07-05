@@ -1,8 +1,24 @@
 package org.jcuda.kacygan.mastersdeg;
 
+import jcuda.Pointer;
+import jcuda.Sizeof;
+import jcuda.driver.CUcontext;
+import jcuda.driver.CUdevice;
+import jcuda.driver.CUdeviceptr;
+import jcuda.driver.CUevent;
+import jcuda.driver.CUfunction;
+import jcuda.driver.CUmodule;
+import jcuda.driver.CUstream;
+import jcuda.driver.JCudaDriver;
+
 import static jcuda.driver.JCudaDriver.cuCtxCreate;
 import static jcuda.driver.JCudaDriver.cuCtxDestroy;
 import static jcuda.driver.JCudaDriver.cuDeviceGet;
+import static jcuda.driver.JCudaDriver.cuEventCreate;
+import static jcuda.driver.JCudaDriver.cuEventDestroy;
+import static jcuda.driver.JCudaDriver.cuEventElapsedTime;
+import static jcuda.driver.JCudaDriver.cuEventRecord;
+import static jcuda.driver.JCudaDriver.cuEventSynchronize;
 import static jcuda.driver.JCudaDriver.cuInit;
 import static jcuda.driver.JCudaDriver.cuLaunchKernel;
 import static jcuda.driver.JCudaDriver.cuMemAlloc;
@@ -15,28 +31,6 @@ import static jcuda.driver.JCudaDriver.cuModuleLoad;
 import static jcuda.driver.JCudaDriver.cuStreamCreate;
 import static jcuda.driver.JCudaDriver.cuStreamDestroy;
 import static jcuda.driver.JCudaDriver.cuStreamSynchronize;
-import static jcuda.driver.JCudaDriver.cuEventCreate;
-import static jcuda.driver.JCudaDriver.cuEventDestroy;
-import static jcuda.driver.JCudaDriver.cuEventRecord;
-import static jcuda.driver.JCudaDriver.cuEventSynchronize;
-import static jcuda.driver.JCudaDriver.cuEventElapsedTime;
-
-import jcuda.Pointer;
-import jcuda.Sizeof;
-import jcuda.driver.CUcontext;
-import jcuda.driver.CUdevice;
-import jcuda.driver.CUdeviceptr;
-import jcuda.driver.CUfunction;
-import jcuda.driver.CUmodule;
-import jcuda.driver.CUstream;
-import jcuda.driver.CUevent;
-import jcuda.driver.JCudaDriver;
-import org.apache.commons.lang3.time.StopWatch;
-
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.Locale;
 
 @SuppressWarnings("java:S106")
 public class FourierCalculator3 implements FourierTest {
@@ -47,7 +41,8 @@ public class FourierCalculator3 implements FourierTest {
 
     @Override
     public void runTest() {
-        // Cold run to warm up GPU
+        System.out.println("TESTING FOURIER WITH SHARED, CONSTANTS AND STREAMS");
+
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
         System.out.println("Cold run completed.\n");
@@ -70,7 +65,6 @@ public class FourierCalculator3 implements FourierTest {
             var context = new CUcontext();
             cuCtxCreate(context, 0, device);
 
-            var delta = (TMAX - TMIN) / (LENGTH - 1);
             var chunkSize = LENGTH / NUM_STREAMS;
             
             var module = new CUmodule();
@@ -78,8 +72,6 @@ public class FourierCalculator3 implements FourierTest {
 
             var function = new CUfunction();
             cuModuleGetFunction(function, module, FUNCTION_NAME);
-
-
 
             var streams = new CUstream[NUM_STREAMS];
             var deviceChunks = new CUdeviceptr[NUM_STREAMS];
@@ -94,7 +86,7 @@ public class FourierCalculator3 implements FourierTest {
                 var currentChunkSize = endIdx - startIdx;
                 
                 deviceChunks[i] = new CUdeviceptr();
-                cuMemAlloc(deviceChunks[i], currentChunkSize * Sizeof.FLOAT);
+                cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
                 hostChunks[i] = new float[currentChunkSize];
             }
 
@@ -112,16 +104,14 @@ public class FourierCalculator3 implements FourierTest {
                 var endIdx = Math.min(startIdx + chunkSize, LENGTH);
                 var currentChunkSize = endIdx - startIdx;
                 
-                // Set up constant memory for the kernel
                 setConstant(module, "d_params", new float[]{
-                    TMIN + startIdx * delta,  // tmin
+                    TMIN + startIdx * DELTA,  // tmin
                     TMAX,                     // tmax
                     LENGTH,                   // length
                     COEFFICIENTS,             // coefficients
-                    delta                     // delta
+                    DELTA                     // delta
                 });
                 
-                // Set up coefficients in constant memory
                 var coefficients = new float[COEFFICIENTS];
                 for (int k = 0; k < COEFFICIENTS; k++) {
                     coefficients[k] = 1.0f / (4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f);
@@ -142,7 +132,7 @@ public class FourierCalculator3 implements FourierTest {
                     sharedMemSize, streams[i],
                     kernelParams, null);
                 cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                    currentChunkSize * Sizeof.FLOAT, streams[i]);
+                        (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
             }
             
             for (var stream : streams) {
@@ -179,11 +169,13 @@ public class FourierCalculator3 implements FourierTest {
     }
 
     private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
-        for (var i = 0; i < prep.length; i++) {
-            System.out.printf("Repetition %d:\n", i + 1);
-            System.out.printf("  Preparation time: %.6f s\n", prep[i]);
-            System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
-            System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+        if (logReps) {
+            for (var i = 0; i < prep.length; i++) {
+                System.out.printf("  Repetition %d:\n", i + 1);
+                System.out.printf("  Preparation time: %.6f s\n", prep[i]);
+                System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
+            }
         }
 
         var n = prep.length;
@@ -213,23 +205,11 @@ public class FourierCalculator3 implements FourierTest {
         for (var v : arr) sum += (v - mean) * (v - mean);
         return Math.sqrt(sum / arr.length);
     }
-
-    private void setConstant(CUmodule module, String name, float value) {
-        CUdeviceptr ptr = new CUdeviceptr();
-        cuModuleGetGlobal(ptr, new long[1], module, name);
-        cuMemcpyHtoD(ptr, Pointer.to(new float[]{value}), Sizeof.FLOAT);
-    }
-
-    private void setConstant(CUmodule module, String name, int value) {
-        CUdeviceptr ptr = new CUdeviceptr();
-        cuModuleGetGlobal(ptr, new long[1], module, name);
-        cuMemcpyHtoD(ptr, Pointer.to(new int[]{value}), Sizeof.INT);
-    }
     
     private void setConstant(CUmodule module, String name, float[] values) {
         CUdeviceptr ptr = new CUdeviceptr();
         cuModuleGetGlobal(ptr, new long[1], module, name);
-        cuMemcpyHtoD(ptr, Pointer.to(values), values.length * Sizeof.FLOAT);
+        cuMemcpyHtoD(ptr, Pointer.to(values), (long) values.length * Sizeof.FLOAT);
     }
     
     private void performColdRun() {
@@ -242,15 +222,12 @@ public class FourierCalculator3 implements FourierTest {
         var context = new CUcontext();
         cuCtxCreate(context, 0, device);
 
-        var delta = (TMAX - TMIN) / (LENGTH - 1);
         var chunkSize = LENGTH / NUM_STREAMS;
         var module = new CUmodule();
         cuModuleLoad(module, PTX_FILENAME);
 
         var function = new CUfunction();
         cuModuleGetFunction(function, module, FUNCTION_NAME);
-
-
 
         var streams = new CUstream[NUM_STREAMS];
         var deviceChunks = new CUdeviceptr[NUM_STREAMS];
@@ -264,7 +241,7 @@ public class FourierCalculator3 implements FourierTest {
             var currentChunkSize = endIdx - startIdx;
             
             deviceChunks[i] = new CUdeviceptr();
-            cuMemAlloc(deviceChunks[i], currentChunkSize * Sizeof.FLOAT);
+            cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
             hostChunks[i] = new float[currentChunkSize];
         }
 
@@ -273,16 +250,14 @@ public class FourierCalculator3 implements FourierTest {
             var endIdx = Math.min(startIdx + chunkSize, LENGTH);
             var currentChunkSize = endIdx - startIdx;
             
-            // Set up constant memory for the kernel
             setConstant(module, "d_params", new float[]{
-                TMIN + startIdx * delta,  // tmin
+                TMIN + startIdx * DELTA,  // tmin
                 TMAX,                     // tmax
                 LENGTH,                   // length
                 COEFFICIENTS,             // coefficients
-                delta                     // delta
+                DELTA                     // delta
             });
             
-            // Set up coefficients in constant memory
             var coefficients = new float[COEFFICIENTS];
             for (int k = 0; k < COEFFICIENTS; k++) {
                 coefficients[k] = 1.0f / (4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f);
@@ -303,13 +278,12 @@ public class FourierCalculator3 implements FourierTest {
                 sharedMemSize, streams[i],
                 kernelParams, null);
             cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                currentChunkSize * Sizeof.FLOAT, streams[i]);
+                    (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
         }
         for (var stream : streams) {
             cuStreamSynchronize(stream);
         }
 
-        // Cleanup
         for (var i = 0; i < NUM_STREAMS; i++) {
             cuMemFree(deviceChunks[i]);
             cuStreamDestroy(streams[i]);
