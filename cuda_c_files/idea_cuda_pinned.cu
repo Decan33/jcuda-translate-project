@@ -15,7 +15,7 @@
         } \
     } while (0)
 
-constexpr int CHUNK_SIZE = 250000000; // match Java
+constexpr int CHUNK_SIZE = 250000000;
 
 __constant__ float const_tmin;
 __constant__ float const_delta;

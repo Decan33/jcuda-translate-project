@@ -36,12 +36,6 @@ public class JCudaMemoryTest {
             cudaMalloc(deviceData, SIZE);
             cudaMemset(deviceData, 0, SIZE);
 
-//            var start = new cudaEvent_t();
-//            var stop = new cudaEvent_t();
-//            cudaEventCreate(start);
-//            cudaEventCreate(stop);
-//
-//            cudaEventRecord(start, null);
 
             cudaMemcpy(deviceData, hPointer, SIZE, cudaMemcpyHostToDevice);
 
@@ -51,20 +45,11 @@ public class JCudaMemoryTest {
 
             cudaMemcpy(hPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
 
-//            cudaEventRecord(stop, null);
-//            cudaEventSynchronize(stop);
-//            var elapsedTime = new float[1];
-//            cudaEventElapsedTime(elapsedTime, start, stop);
         }
 
         var stopCPU = System.nanoTime();
 
         System.out.printf("Version 1 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
-//        System.out.printf("Version 1 GPU event time: %.3f s\n", elapsedTime[0] / 1000.0f);
-//
-//        cudaEventDestroy(start);
-//        cudaEventDestroy(stop);
-//        cudaFree(deviceData);
     }
 
     static void version2() {
@@ -76,34 +61,18 @@ public class JCudaMemoryTest {
             cudaMalloc(deviceData, SIZE);
             cudaMemset(deviceData, 0, SIZE);
 
-//            var start = new cudaEvent_t();
-//            var stop = new cudaEvent_t();
-//            cudaEventCreate(start);
-//            cudaEventCreate(stop);
-
-//            cudaEventRecord(start, null);
-
             for (int i = 0; i < N; i++) {
                 cudaMemcpy(deviceData, hostPointer, SIZE, cudaMemcpyHostToDevice);
                 launchAddOneKernel(deviceData);
                 cudaMemcpy(hostPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
             }
 
-//            cudaEventRecord(stop, null);
-//            cudaEventSynchronize(stop);
-//            var elapsedTime = new float[1];
-//            cudaEventElapsedTime(elapsedTime, start, stop);
-
-
-//            cudaEventDestroy(start);
-//            cudaEventDestroy(stop);
             cudaFree(deviceData);
         }
         var stopCPU = System.nanoTime();
 
 
         System.out.printf("Version 2 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
-//        System.out.printf("Version 2 GPU event time: %.3f s\n", elapsedTime[0] / 1000.0f);
     }
 
     static void launchAddOneKernel(Pointer data) {

@@ -46,7 +46,6 @@ public class FourierCalculatorPinned implements FourierTest{
 
             System.out.println("TESTING FOURIER USING PINNED MEMORY");
 
-            // Cold run to warm up GPU
             System.out.println("Performing cold run to warm up GPU...");
             performColdRun();
             System.out.println("Cold run completed.\n");

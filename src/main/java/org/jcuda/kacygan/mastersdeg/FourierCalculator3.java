@@ -147,7 +147,6 @@ public class FourierCalculator3 implements FourierTest {
             cuEventDestroy(kernelStart);
             cuEventDestroy(kernelStop);
             
-            // --- Copy timing ---
             var copyStart = new CUevent();
             var copyStop = new CUevent();
             cuEventCreate(copyStart, 0);
