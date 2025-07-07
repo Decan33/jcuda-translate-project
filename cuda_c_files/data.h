@@ -1,4 +1,4 @@
-constexpr int NUM_REPS = 20;
+constexpr int NUM_REPS = 100;
 constexpr int THREADS_PER_BLOCK = 256;
 constexpr int MAX_COEFFICIENTS = 1024;
 constexpr float tmin = -3.0f;

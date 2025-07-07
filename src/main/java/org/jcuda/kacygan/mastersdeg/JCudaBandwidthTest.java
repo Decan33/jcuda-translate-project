@@ -34,6 +34,8 @@ import jcuda.runtime.cudaEvent_t;
  */
 public class JCudaBandwidthTest
 {
+    static final int NUM_REPS = 100; // Should match data.h
+
     /**
      * Memory modes for the host memory
      */
@@ -86,68 +88,50 @@ public class JCudaBandwidthTest
         int minExponent = 10;
         int maxExponent = 28;
         int count = maxExponent - minExponent;
-        int memorySizes[] = new int[count];
-        float bandwidths[] = new float[memorySizes.length];
+        int[] memorySizes = new int[count];
+        float[] timesMs = new float[memorySizes.length];
+        float[] mbps = new float[memorySizes.length];
 
         System.out.print("Running");
         for (int i=0; i<count; i++)
         {
             System.out.print(".");
             memorySizes[i] = (1 << minExponent + i);
-            float bandwidth = computeBandwidth(
+            float[] result = computeCopyTimeAndBandwidth(
                     hostMemoryMode, hostAllocFlags, memorySizes[i]);
-            bandwidths[i] = bandwidth;
+            timesMs[i] = result[0];
+            mbps[i] = result[1];
         }
         System.out.println();
 
-        System.out.println("Bandwidths for "+hostMemoryMode);
+        System.out.printf("%12s | %15s | %15s\n", "Size (bytes)", "Time (s)", "Bandwidth (MB/s)");
+        System.out.println("---------------------------------------------------------------");
         for (int i=0; i<memorySizes.length; i++)
         {
-            String s = String.format("%10d", memorySizes[i]);
-            String b = String.format(Locale.ENGLISH, "%5.3f", bandwidths[i]);
-            System.out.println(s+" bytes : "+b+" MB/s");
+            String s = String.format("%12d", memorySizes[i]);
+            String t = String.format(Locale.ENGLISH, "%15.6f", timesMs[i] / 1000.0f);
+            String b = String.format(Locale.ENGLISH, "%15.3f", mbps[i]);
+            System.out.println(s+" | "+t+" | "+b);
         }
         System.out.println("\n");
     }
 
 
     /**
-     * Compute the bandwidth in MB per second for copying data from the
-     * host to the device
-     *
-     * @param hostMemoryMode The {@link HostMemoryMode}
-     * @param hostAllocFlags The flags for the cudaHostAlloc call
-     * @param memorySizes The memory sizes, in bytes
-     * @param bandwidths Will store the bandwidth, in MB per second
-     */
-    static void computeBandwidths(
-            HostMemoryMode hostMemoryMode, int hostAllocFlags,
-            int memorySizes[], float bandwidths[])
-    {
-        for (int i=0; i<memorySizes.length; i++)
-        {
-            int memorySize = memorySizes[i];
-            float bandwidth = computeBandwidth(
-                    hostMemoryMode, hostAllocFlags, memorySize);
-            bandwidths[i] = bandwidth;
-        }
-    }
-
-    /**
-     * Compute the bandwidth in MB per second for copying data from the
+     * Compute the time in milliseconds and bandwidth in MBps for copying data from the
      * host to the device
      *
      * @param hostMemoryMode The {@link HostMemoryMode}
      * @param hostAllocFlags The flags for the cudaHostAlloc call
      * @param memorySize The memory size, in bytes
-     * @return The bandwidth, in MB per second
+     * @return float[]{elapsedTimeMs, bandwidthMBps}
      */
-    static float computeBandwidth(
+    static float[] computeCopyTimeAndBandwidth(
             HostMemoryMode hostMemoryMode, int hostAllocFlags, int memorySize)
     {
         // Initialize the host memory
-        Pointer hostData = null;
-        ByteBuffer hostDataBuffer = null;
+        Pointer hostData;
+        ByteBuffer hostDataBuffer;
         if (hostMemoryMode == HostMemoryMode.PINNED)
         {
             // Allocate pinned (page-locked) host memory
@@ -158,7 +142,7 @@ public class JCudaBandwidthTest
         else if (hostMemoryMode == HostMemoryMode.PAGEABLE_ARRAY)
         {
             // The host memory is pageable and stored in a Java array
-            byte array[] = new byte[memorySize];
+            var array = new byte[memorySize];
             hostDataBuffer = ByteBuffer.wrap(array);
             hostData = Pointer.to(array);
         }
@@ -179,9 +163,10 @@ public class JCudaBandwidthTest
         Pointer deviceData = new Pointer();
         cudaMalloc(deviceData, memorySize);
 
-        final int runs = 10;
-        float bandwidth = computeBandwidth(
-                deviceData, hostData, cudaMemcpyHostToDevice, memorySize, runs);
+        float elapsedTimeMs = computeCopyTime(
+                deviceData, hostData, cudaMemcpyHostToDevice, memorySize, NUM_REPS);
+        float totalBytes = (float)memorySize * NUM_REPS;
+        float bandwidthMBps = (totalBytes / (elapsedTimeMs / 1000.0f)) / (1024.0f * 1024.0f);
 
         // Clean up
         if (hostMemoryMode == HostMemoryMode.PINNED)
@@ -189,12 +174,11 @@ public class JCudaBandwidthTest
             cudaFreeHost(hostData);
         }
         cudaFree(deviceData);
-        return bandwidth;
+        return new float[]{elapsedTimeMs, bandwidthMBps};
     }
 
-
     /**
-     * Compute the bandwidth in MB per second for copying data from the 
+     * Compute the time in milliseconds for copying data from the 
      * given source pointer to the given destination pointer
      *
      * @param dstData The destination pointer
@@ -204,9 +188,9 @@ public class JCudaBandwidthTest
      * @param memSize The memory size, in bytes
      * @param runs The number of times that the copying operation
      * should be repeated
-     * @return The bandwidth in MB per second
+     * @return The time in milliseconds
      */
-    static float computeBandwidth(
+    static float computeCopyTime(
             Pointer dstData, Pointer srcData,
             int memcopyKind, int memSize, int runs)
     {
@@ -225,18 +209,14 @@ public class JCudaBandwidthTest
         cudaEventRecord(stop, null);
         cudaDeviceSynchronize();
 
-        // Compute the elapsed time and bandwidth
-        // in MB per second
-        float elapsedTimeMsArray[] = { Float.NaN };
+        // Compute the elapsed time
+        float[] elapsedTimeMsArray = { Float.NaN };
         cudaEventElapsedTime(elapsedTimeMsArray, start, stop);
         float elapsedTimeMs = elapsedTimeMsArray[0];
-        float bandwidthInBytesPerMs =
-                ((float) memSize * runs) / elapsedTimeMs;
-        float bandwidth = bandwidthInBytesPerMs / 1024;
 
         // Clean up
         cudaEventDestroy(stop);
         cudaEventDestroy(start);
-        return bandwidth;
+        return elapsedTimeMs;
     }
 }
