@@ -14,6 +14,7 @@ public class FourierRunner {
                 new FourierCalculatorPinned()
         );
 
+
         for (var test : tests) {
             test.runTest();
         }

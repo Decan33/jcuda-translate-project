@@ -8,7 +8,6 @@ __constant__ float const_pi_squared;
 __constant__ float const_T;
 __constant__ float const_pi_over_T;
 __constant__ float constant_result_coefficient;
-__constant__ int const_chunk_size;
 
 extern "C"
 __global__ void fourier(float* results)
@@ -26,7 +25,7 @@ __global__ void fourier(float* results)
 
     __syncthreads();
 
-    if (tid >= const_chunk_size) return;
+    if (tid >= gridDim.x * blockDim.x) return;
 
     float t = const_tmin + tid * const_delta;
     float sum = 0.0f;

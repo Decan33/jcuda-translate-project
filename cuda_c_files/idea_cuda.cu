@@ -51,12 +51,6 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
 
     auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-    constexpr float pi = 3.14159265f;
-    constexpr float pi_squared = pi * pi;
-    constexpr float T = 1.0f;
-    constexpr float pi_over_T = pi / T;
-    constexpr float host_result_coefficient = (4.0f * T) / pi_squared;
-
     cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
     cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
     cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
@@ -65,7 +59,7 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
     cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
     cudaMemcpyToSymbol(const_T, &T, sizeof(float));
     cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-    cudaMemcpyToSymbol(constant_result_coefficient, &host_result_coefficient, sizeof(float));
+    cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
 
     fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
     cudaDeviceSynchronize();
@@ -94,12 +88,6 @@ int main()
 
 		auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-		constexpr float pi = 3.14159265f;
-		constexpr float pi_squared = pi * pi;
-		constexpr float T = 1.0f;
-		constexpr float pi_over_T = pi / T;
-		constexpr float host_result_coefficient = (4.0f * T) / pi_squared;
-
 		cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
 		cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
 		cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
@@ -108,7 +96,7 @@ int main()
 		cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
 		cudaMemcpyToSymbol(const_T, &T, sizeof(float));
 		cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-		cudaMemcpyToSymbol(constant_result_coefficient, &host_result_coefficient, sizeof(float));
+		cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
 
 		auto prep_end = std::chrono::high_resolution_clock::now();
 		prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());

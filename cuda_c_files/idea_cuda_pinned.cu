@@ -3,7 +3,19 @@
 #include <cmath>
 #include <vector>
 #include <chrono>
+#include <cstring>
 #include "data.h"
+
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " << cudaGetErrorString(err) << std::endl; \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
+
+constexpr int CHUNK_SIZE = 250000000; // match Java
 
 __constant__ float const_tmin;
 __constant__ float const_delta;
@@ -47,32 +59,42 @@ __global__ void fourier(float* results)
 
 void performColdRun(float tmin, float tmax, int length, int coefficients, float delta) {
     float* result_device;
-    cudaMalloc((void**)&result_device, length * sizeof(float));
+    CUDA_CHECK(cudaMalloc((void**)&result_device, length * sizeof(float)));
 
     auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-    cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
-    cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
-    cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int)));
 
-    cudaMemcpyToSymbol(const_pi, &pi, sizeof(float));
-    cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
-    cudaMemcpyToSymbol(const_T, &T, sizeof(float));
-    cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-    cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_pi, &pi, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_T, &T, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float)));
 
     fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaDeviceSynchronize());
 
+    int actualChunkSize = std::min(CHUNK_SIZE, length);
     float* result_host;
-    cudaMallocHost((void**)&result_host, length * sizeof(float));
-    cudaMemcpy(result_host, result_device, length * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFreeHost(result_host);
-    cudaFree(result_device);
+    CUDA_CHECK(cudaHostAlloc((void**)&result_host, actualChunkSize * sizeof(float), cudaHostAllocDefault));
+    for (int offset = 0; offset < length; offset += actualChunkSize) {
+        int thisChunk = std::min(actualChunkSize, length - offset);
+        CUDA_CHECK(cudaMemcpy(result_host, result_device + offset, thisChunk * sizeof(float), cudaMemcpyDeviceToHost));
+    }
+    CUDA_CHECK(cudaFreeHost(result_host));
+    CUDA_CHECK(cudaFree(result_device));
 }
 
 int main()
 {
+    long long requiredDeviceMemory = (long long)length * sizeof(float);
+    long long requiredHostMemory = (long long)std::min(CHUNK_SIZE, length) * sizeof(float);
+    printf("Memory requirements: Device=%.2f GB, Host chunk=%.2f MB\n",
+        requiredDeviceMemory / (1024.0 * 1024.0 * 1024.0),
+        requiredHostMemory / (1024.0 * 1024.0));
+    printf("TESTING FOURIER USING PINNED MEMORY\n");
     printf("Performing cold run to warm up GPU...\n");
     performColdRun(tmin, tmax, length, coefficients, delta);
     printf("Cold run completed.\n\n");
@@ -84,50 +106,54 @@ int main()
         auto prep_start = std::chrono::high_resolution_clock::now();
         
         float* result_device;
-        cudaMalloc((void**)&result_device, length * sizeof(float));
+        CUDA_CHECK(cudaMalloc((void**)&result_device, length * sizeof(float)));
 
         auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float));
-        cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float));
-        cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int)));
 
-        cudaMemcpyToSymbol(const_pi, &pi, sizeof(float));
-        cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float));
-        cudaMemcpyToSymbol(const_T, &T, sizeof(float));
-        cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float));
-        cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_pi, &pi, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_T, &T, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float)));
+        CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float)));
 
         auto prep_end = std::chrono::high_resolution_clock::now();
         prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
         
         cudaEvent_t kernel_start, kernel_stop;
-        cudaEventCreate(&kernel_start);
-        cudaEventCreate(&kernel_stop);
-        cudaEventRecord(kernel_start);
+        CUDA_CHECK(cudaEventCreate(&kernel_start));
+        CUDA_CHECK(cudaEventCreate(&kernel_stop));
+        CUDA_CHECK(cudaEventRecord(kernel_start));
         
         fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
-        cudaDeviceSynchronize();
-        cudaEventRecord(kernel_stop);
-        cudaEventSynchronize(kernel_stop);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaEventRecord(kernel_stop));
+        CUDA_CHECK(cudaEventSynchronize(kernel_stop));
         
         float kernel_ms = 0.0f;
-        cudaEventElapsedTime(&kernel_ms, kernel_start, kernel_stop);
+        CUDA_CHECK(cudaEventElapsedTime(&kernel_ms, kernel_start, kernel_stop));
         kernel_times.push_back(kernel_ms / 1000.0);
         
-        cudaEventDestroy(kernel_start);
-        cudaEventDestroy(kernel_stop);
+        CUDA_CHECK(cudaEventDestroy(kernel_start));
+        CUDA_CHECK(cudaEventDestroy(kernel_stop));
         
         auto copy_start = std::chrono::high_resolution_clock::now();
+        int actualChunkSize = std::min(CHUNK_SIZE, length);
         float* result_host;
-        cudaMallocHost((void**)&result_host, length * sizeof(float));
-        cudaMemcpy(result_host, result_device, length * sizeof(float), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaHostAlloc((void**)&result_host, actualChunkSize * sizeof(float), cudaHostAllocDefault));
+        for (int offset = 0; offset < length; offset += actualChunkSize) {
+            int thisChunk = std::min(actualChunkSize, length - offset);
+            CUDA_CHECK(cudaMemcpy(result_host, result_device + offset, thisChunk * sizeof(float), cudaMemcpyDeviceToHost));
+        }
         auto copy_end = std::chrono::high_resolution_clock::now();
         copy_times.push_back(std::chrono::duration<double>(copy_end - copy_start).count());
         
         auto delete_start = std::chrono::high_resolution_clock::now();
-        cudaFreeHost(result_host);
-        cudaFree(result_device);
+        CUDA_CHECK(cudaFreeHost(result_host));
+        CUDA_CHECK(cudaFree(result_device));
         auto delete_end = std::chrono::high_resolution_clock::now();
         
         delete_times.push_back(std::chrono::duration<double>(delete_end - delete_start).count());

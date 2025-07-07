@@ -17,7 +17,6 @@ import static jcuda.driver.JCudaDriver.*;
 public class FourierCalculator4 implements FourierTest {
     //Fourier: streams version
     private static final String PTX_FILENAME = "Fourier3.ptx";
-    private static final int NUM_STREAMS = 4;
 
     @Override
     public void runTest() {
@@ -29,6 +28,7 @@ public class FourierCalculator4 implements FourierTest {
         
         var prepTimes = new double[NUM_REPS];
         var kernelTimes = new double[NUM_REPS];
+        var copyTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
         
         var startWholeTime = System.nanoTime();
@@ -101,8 +101,6 @@ public class FourierCalculator4 implements FourierTest {
                     0, streams[i],
                     kernelParameters, null
                 );
-
-                cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
             }
             
             for (var stream : streams) {
@@ -114,10 +112,17 @@ public class FourierCalculator4 implements FourierTest {
             var kernelMs = new float[1];
 
             cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
-            kernelTimes[rep] = kernelMs[0] / 1000.0;
+            kernelTimes[rep] = kernelMs[0] / THOUSAND;
             
             cuEventDestroy(kernelStart);
             cuEventDestroy(kernelStop);
+
+            var copyStart = System.nanoTime();
+            for (var i = 0; i < NUM_STREAMS; i++) {
+                cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)hostResults[i].length * Sizeof.FLOAT);
+            }
+            var copyEnd = System.nanoTime();
+            copyTimes[rep] = (copyEnd - copyStart) / 1e9;
 
             var deleteStart = System.nanoTime();
             
@@ -134,15 +139,16 @@ public class FourierCalculator4 implements FourierTest {
         
         var endWholeTime = System.nanoTime();
 
-        logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
+        logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] copy, double[] del, double wholeTime) {
         if (logReps) {
             for (var i = 0; i < prep.length; i++) {
                 System.out.printf("  Repetition %d:\n", i + 1);
                 System.out.printf("  Preparation time: %.6f s\n", prep[i]);
                 System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Data copy time: %.6f s\n", copy[i]);
                 System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
             }
         }
@@ -150,14 +156,17 @@ public class FourierCalculator4 implements FourierTest {
         var n = prep.length;
         var prepAvg = mean(prep);
         var kernelAvg = mean(kernel);
+        var copyAvg = mean(copy);
         var delAvg = mean(del);
         var prepStd = standardDeviation(prep, prepAvg);
         var kernelStd = standardDeviation(kernel, kernelAvg);
+        var copyStd = standardDeviation(copy, copyAvg);
         var delStd = standardDeviation(del, delAvg);
 
         System.out.printf("\nAverages over %d repetitions:\n", n);
         System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
         System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
+        System.out.printf("  Avg data copy time: %.6f s (stddev: %.6f s)\n", copyAvg, copyStd);
         System.out.printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delAvg, delStd);
         System.out.printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, wholeTime / 1e9);
         System.out.println("=========================");

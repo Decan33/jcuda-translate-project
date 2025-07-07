@@ -8,7 +8,6 @@ CUDA_FILES = [
     "idea_cuda_pinned.cu",
     "idea_cuda.cu",
     "idea_cuda_raw.cu",
-    "idea_cuda_raw_improved.cu",
     "idea_cuda_stream_async.cu",
     "idea_cuda_stream.cu"
 ]

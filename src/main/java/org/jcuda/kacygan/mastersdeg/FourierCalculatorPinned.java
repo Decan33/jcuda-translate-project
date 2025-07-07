@@ -53,6 +53,7 @@ public class FourierCalculatorPinned implements FourierTest{
             
             double[] prepTimes = new double[NUM_REPS];
             double[] kernelTimes = new double[NUM_REPS];
+            double[] copyTimes = new double[NUM_REPS];
             double[] deleteTimes = new double[NUM_REPS];
             
             long startWholeTime = System.nanoTime();
@@ -119,31 +120,30 @@ public class FourierCalculatorPinned implements FourierTest{
                 cuEventDestroy(kernelStart);
                 cuEventDestroy(kernelStop);
                 
-                long deleteStart = System.nanoTime();
-
+                long copyStart = System.nanoTime();
                 int actualChunkSize = Math.min(CHUNK_SIZE, LENGTH);
                 Pointer hostResults = new Pointer();
                 cudaHostAlloc(hostResults, (long)actualChunkSize * Sizeof.FLOAT, cudaHostAllocDefault);
-                
                 for (int offset = 0; offset < LENGTH; offset += actualChunkSize) {
                     int thisChunk = Math.min(actualChunkSize, LENGTH - offset);
                     long byteOffset = (long)offset * Sizeof.FLOAT;
-                    
                     cuMemcpyDtoH(hostResults,
                                  deviceResults.withByteOffset(byteOffset),
                                  (long)thisChunk * Sizeof.FLOAT);
                 }
-                
+                long copyEnd = System.nanoTime();
+                copyTimes[rep] = (copyEnd - copyStart) / 1e9;
+
+                long deleteStart = System.nanoTime();
                 cudaFreeHost(hostResults);
                 cuMemFree(deviceResults);
                 cuCtxDestroy(context);
-                
                 long deleteEnd = System.nanoTime();
                 deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
             }
             
             long endWholeTime = System.nanoTime();
-            logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
+            logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
             
         } catch (Exception e) {
             System.err.println("Error in FourierCalculatorPinned: " + e.getMessage());
@@ -151,12 +151,13 @@ public class FourierCalculatorPinned implements FourierTest{
         }
     }
 
-    private static void logTimings(double[] prep, double[] kernel, double[] del, long wholeTime) {
+    private static void logTimings(double[] prep, double[] kernel, double[] copy, double[] del, long wholeTime) {
         if (logReps) {
             for (var i = 0; i < prep.length; i++) {
                 System.out.printf("  Repetition %d:\n", i + 1);
                 System.out.printf("  Preparation time: %.6f s\n", prep[i]);
                 System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Data copy time: %.6f s\n", copy[i]);
                 System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
             }
         }
@@ -164,14 +165,17 @@ public class FourierCalculatorPinned implements FourierTest{
         int n = prep.length;
         double prepAvg = mean(prep);
         double kernelAvg = mean(kernel);
+        double copyAvg = mean(copy);
         double delAvg = mean(del);
         double prepStd = standardDeviation(prep, prepAvg);
         double kernelStd = standardDeviation(kernel, kernelAvg);
+        double copyStd = standardDeviation(copy, copyAvg);
         double delStd = standardDeviation(del, delAvg);
 
         System.out.printf("\nAverages over %d repetitions:\n", n);
         System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
         System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
+        System.out.printf("  Avg data copy time: %.6f s (stddev: %.6f s)\n", copyAvg, copyStd);
         System.out.printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delAvg, delStd);
         System.out.printf("  Whole time taken for %d reps: %.6f s\n", n, wholeTime / 1e9);
         System.out.println("=========================");
@@ -200,8 +204,6 @@ public class FourierCalculatorPinned implements FourierTest{
             CUcontext context = new CUcontext();
             cuCtxCreate(context, 0, device);
             
-            float delta = (TMAX - TMIN) / (LENGTH - 1);
-            
             CUdeviceptr deviceResults = new CUdeviceptr();
             cuMemAlloc(deviceResults, (long)LENGTH * Sizeof.FLOAT);
             
@@ -213,7 +215,7 @@ public class FourierCalculatorPinned implements FourierTest{
             
             Pointer kernelParameters = Pointer.to(
                 Pointer.to(new float[]{TMIN}),
-                Pointer.to(new float[]{delta}),
+                Pointer.to(new float[]{DELTA}),
                 Pointer.to(new int[]{LENGTH}),
                 Pointer.to(new int[]{COEFFICIENTS}),
                 Pointer.to(new float[]{PI}),
@@ -225,7 +227,6 @@ public class FourierCalculatorPinned implements FourierTest{
             
             int blocksPerGrid = (LENGTH + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
             
-            // Execute kernel without timing
             cuLaunchKernel(function,
                 blocksPerGrid, 1, 1,
                 THREADS_PER_BLOCK, 1, 1,
@@ -233,7 +234,6 @@ public class FourierCalculatorPinned implements FourierTest{
                 kernelParameters, null
             );
             
-            // Copy results without timing using adaptive chunked approach
             int actualChunkSize = Math.min(CHUNK_SIZE, LENGTH);
             Pointer hostResults = new Pointer();
             cudaHostAlloc(hostResults, (long)actualChunkSize * Sizeof.FLOAT, cudaHostAllocDefault);
@@ -247,7 +247,6 @@ public class FourierCalculatorPinned implements FourierTest{
                              (long)thisChunk * Sizeof.FLOAT);
             }
             
-            // Cleanup
             cudaFreeHost(hostResults);
             cuMemFree(deviceResults);
             cuCtxDestroy(context);

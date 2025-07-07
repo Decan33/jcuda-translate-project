@@ -36,7 +36,6 @@ import static jcuda.driver.JCudaDriver.cuStreamSynchronize;
 public class FourierCalculator3 implements FourierTest {
     //Fourier: Streams + shared version
     private static final String PTX_FILENAME = "Fourier4.ptx";
-    private static final int NUM_STREAMS = 4;
 
 
     @Override
@@ -49,6 +48,7 @@ public class FourierCalculator3 implements FourierTest {
         
         var prepTimes = new double[NUM_REPS];
         var kernelTimes = new double[NUM_REPS];
+        var copyTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
 
         var startWholeTime = System.nanoTime();
@@ -131,8 +131,6 @@ public class FourierCalculator3 implements FourierTest {
                     THREADS_PER_BLOCK, 1, 1,
                     sharedMemSize, streams[i],
                     kernelParams, null);
-                cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                        (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
             }
             
             for (var stream : streams) {
@@ -149,6 +147,27 @@ public class FourierCalculator3 implements FourierTest {
             cuEventDestroy(kernelStart);
             cuEventDestroy(kernelStop);
             
+            // --- Copy timing ---
+            var copyStart = new CUevent();
+            var copyStop = new CUevent();
+            cuEventCreate(copyStart, 0);
+            cuEventCreate(copyStop, 0);
+            cuEventRecord(copyStart, null);
+            for (var i = 0; i < NUM_STREAMS; i++) {
+                cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
+                        (long) hostChunks[i].length * Sizeof.FLOAT, streams[i]);
+            }
+            for (var stream : streams) {
+                cuStreamSynchronize(stream);
+            }
+            cuEventRecord(copyStop, null);
+            cuEventSynchronize(copyStop);
+            var copyMs = new float[1];
+            cuEventElapsedTime(copyMs, copyStart, copyStop);
+            copyTimes[rep] = copyMs[0] / 1000.0;
+            cuEventDestroy(copyStart);
+            cuEventDestroy(copyStop);
+
             var deleteStart = System.nanoTime();
 
             for (var i = 0; i < NUM_STREAMS; i++) {
@@ -165,15 +184,16 @@ public class FourierCalculator3 implements FourierTest {
         
         var endWholeTime = System.nanoTime();
 
-        logTimings(prepTimes, kernelTimes, deleteTimes, endWholeTime - startWholeTime);
+        logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
     }
 
-    private void logTimings(double[] prep, double[] kernel, double[] del, double wholeTime) {
+    private void logTimings(double[] prep, double[] kernel, double[] copy, double[] del, double wholeTime) {
         if (logReps) {
             for (var i = 0; i < prep.length; i++) {
                 System.out.printf("  Repetition %d:\n", i + 1);
                 System.out.printf("  Preparation time: %.6f s\n", prep[i]);
                 System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
+                System.out.printf("  Data copy time: %.6f s\n", copy[i]);
                 System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
             }
         }
@@ -181,14 +201,17 @@ public class FourierCalculator3 implements FourierTest {
         var n = prep.length;
         var prepAvg = mean(prep);
         var kernelAvg = mean(kernel);
+        var copyAvg = mean(copy);
         var delAvg = mean(del);
         var prepStd = stddev(prep, prepAvg);
         var kernelStd = stddev(kernel, kernelAvg);
+        var copyStd = stddev(copy, copyAvg);
         var delStd = stddev(del, delAvg);
 
         System.out.printf("\nAverages over %d repetitions:\n", n);
         System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
         System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
+        System.out.printf("  Avg data copy time: %.6f s (stddev: %.6f s)\n", copyAvg, copyStd);
         System.out.printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delAvg, delStd);
         System.out.printf("  Whole time taken for %d reps: %.6f s\n",NUM_REPS, wholeTime / 1e9);
         System.out.println("=========================");

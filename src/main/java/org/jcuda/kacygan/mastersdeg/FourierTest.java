@@ -15,6 +15,7 @@ public interface FourierTest {
     float PI_OVER_T = (PI / PERIOD);
     float PI_SQUARED = PI * PI;
     float RESULT_COEFFICIENT = (4.0f) / (PI_SQUARED);
+    int NUM_STREAMS = 4;
     boolean logReps = false;
 
     void runTest();
