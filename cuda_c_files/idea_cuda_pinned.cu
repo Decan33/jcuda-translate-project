@@ -17,44 +17,28 @@
 
 constexpr int CHUNK_SIZE = 250000000;
 
-__constant__ float const_tmin;
-__constant__ float const_delta;
-__constant__ int   const_coefficients;
-
-__constant__ float const_pi;
-__constant__ float const_pi_squared;
-__constant__ float const_T;
-__constant__ float const_pi_over_T;
-__constant__ float constant_result_coefficient;
-
-__global__ void fourier(float* results)
+extern "C"
+__global__ void fourier(
+    float tmin,
+    float delta,
+    int length,
+    int coefficients,
+    float pi,
+    float pi_over_T,
+    float result_coefficient,
+    float T,
+    float *results)
 {
-    __shared__ float shared_coefficients[MAX_COEFFICIENTS];
-
-    auto tid = blockIdx.x * blockDim.x + threadIdx.x;
-    auto idx = threadIdx.x;
-
-    for (auto k = idx; k < const_coefficients; k += blockDim.x)
-    {
-        auto denominator = 4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f;
-        shared_coefficients[k] = 1.0f / denominator;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= length) return;
+    float t = tmin + idx * delta;
+    float sum = 0.0f;
+    for (int k = 1; k <= coefficients; ++k) {
+        float angle = (2 * k - 1) * pi_over_T * t;
+        float denominator = 4.0f * k * k - 4.0f * k + 1.0f;
+        sum += cosf(angle) / denominator;
     }
-
-    __syncthreads();
-
-    if (tid >= gridDim.x * blockDim.x) return;
-
-    auto t = const_tmin + tid * const_delta;
-    auto sum = 0.0f;
-
-    for (auto k = 1; k <= const_coefficients; ++k)
-    {
-        auto angle = (2 * k - 1) * const_pi_over_T * t;
-        auto numerator = cosf(angle);
-        sum += numerator * shared_coefficients[k - 1];
-    }
-
-    results[tid] = const_T * 0.5f - (constant_result_coefficient * sum);
+    results[idx] = T * 0.5f - result_coefficient * sum;
 }
 
 void performColdRun(float tmin, float tmax, int length, int coefficients, float delta) {
@@ -63,17 +47,17 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
 
     auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-    CUDA_CHECK(cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int)));
-
-    CUDA_CHECK(cudaMemcpyToSymbol(const_pi, &pi, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(const_T, &T, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float)));
-
-    fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
+    fourier<<<blocks, THREADS_PER_BLOCK>>>(
+        tmin,
+        delta,
+        length,
+        coefficients,
+        pi,
+        pi_over_T,
+        result_coefficient,
+        T,
+        result_device
+    );
     CUDA_CHECK(cudaDeviceSynchronize());
 
     int actualChunkSize = std::min(CHUNK_SIZE, length);
@@ -110,16 +94,6 @@ int main()
 
         auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        CUDA_CHECK(cudaMemcpyToSymbol(const_tmin,   &tmin, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(const_delta,  &delta, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(const_coefficients, &coefficients, sizeof(int)));
-
-        CUDA_CHECK(cudaMemcpyToSymbol(const_pi, &pi, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(const_pi_squared, &pi_squared, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(const_T, &T, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(float)));
-        CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(float)));
-
         auto prep_end = std::chrono::high_resolution_clock::now();
         prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
         
@@ -128,7 +102,17 @@ int main()
         CUDA_CHECK(cudaEventCreate(&kernel_stop));
         CUDA_CHECK(cudaEventRecord(kernel_start));
         
-        fourier<<<blocks, THREADS_PER_BLOCK>>>(result_device);
+        fourier<<<blocks, THREADS_PER_BLOCK>>>(
+            tmin,
+            delta,
+            length,
+            coefficients,
+            pi,
+            pi_over_T,
+            result_coefficient,
+            T,
+            result_device
+        );
         CUDA_CHECK(cudaDeviceSynchronize());
         CUDA_CHECK(cudaEventRecord(kernel_stop));
         CUDA_CHECK(cudaEventSynchronize(kernel_stop));
@@ -163,13 +147,13 @@ int main()
     double prep_sum = 0, kernel_sum = 0, copy_sum = 0, delete_sum = 0;
     
     for (auto i = 0u; i < prep_times.size(); ++i) {
-	    if(logReps) {
-	        printf("Repetition %u:\n", i + 1);
-        	printf("  Preparation time: %.6f s\n", prep_times[i]);
-        	printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
-        	printf("  Data copy time: %.6f s\n", copy_times[i]);
-        	printf("  Memory deletion time: %.6f s\n", delete_times[i]);
-	    }
+    	if(logReps) {
+        printf("Repetition %u:\n", i + 1);
+        printf("  Preparation time: %.6f s\n", prep_times[i]);
+        printf("  Kernel execution time: %.6f s\n", kernel_times[i]);
+        printf("  Data copy time: %.6f s\n", copy_times[i]);
+        printf("  Memory deletion time: %.6f s\n", delete_times[i]);
+    	}
         prep_sum += prep_times[i];
         kernel_sum += kernel_times[i];
         copy_sum += copy_times[i];

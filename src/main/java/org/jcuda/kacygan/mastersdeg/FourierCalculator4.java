@@ -53,7 +53,8 @@ public class FourierCalculator4 implements FourierTest {
 
             var chunkSize = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
             var deviceResults = new CUdeviceptr[NUM_STREAMS];
-            var hostResults = new float[NUM_STREAMS][];
+            var hostResultPtrs = new Pointer[NUM_STREAMS];
+            var hostResultBuffers = new java.nio.FloatBuffer[NUM_STREAMS];
             
             var module = new CUmodule();
             cuModuleLoad(module, PTX_FILENAME);
@@ -77,7 +78,9 @@ public class FourierCalculator4 implements FourierTest {
 
                 deviceResults[i] = new CUdeviceptr();
                 cuMemAlloc(deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
-                hostResults[i] = new float[currentChunkSize];
+                hostResultPtrs[i] = new Pointer();
+                cuMemHostAlloc(hostResultPtrs[i], (long)currentChunkSize * Sizeof.FLOAT, 0);
+                hostResultBuffers[i] = hostResultPtrs[i].getByteBuffer(0, (long)currentChunkSize * Sizeof.FLOAT).asFloatBuffer();
 
                 var chunkTmin = TMIN + startIdx * DELTA;
                 var kernelParameters = Pointer.to(
@@ -119,7 +122,7 @@ public class FourierCalculator4 implements FourierTest {
 
             var copyStart = System.nanoTime();
             for (var i = 0; i < NUM_STREAMS; i++) {
-                cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)hostResults[i].length * Sizeof.FLOAT);
+                cuMemcpyDtoH(hostResultPtrs[i], deviceResults[i], (long)Math.min(chunkSize, LENGTH - i * chunkSize) * Sizeof.FLOAT);
             }
             var copyEnd = System.nanoTime();
             copyTimes[rep] = (copyEnd - copyStart) / 1e9;
@@ -128,6 +131,7 @@ public class FourierCalculator4 implements FourierTest {
             
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemFree(deviceResults[i]);
+                cuMemFreeHost(hostResultPtrs[i]);
                 cuStreamDestroy(streams[i]);
             }
 
@@ -195,14 +199,19 @@ public class FourierCalculator4 implements FourierTest {
         cuCtxCreate(context, 0, device);
         
         var streams = new CUstream[NUM_STREAMS];
+        var chunkSize = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
+        var deviceResults = new CUdeviceptr[NUM_STREAMS];
+        var hostResultPtrs = new Pointer[NUM_STREAMS];
+        var hostResultBuffers = new java.nio.FloatBuffer[NUM_STREAMS];
         for (var i = 0; i < NUM_STREAMS; i++) {
             streams[i] = new CUstream();
             cuStreamCreate(streams[i], 0);
+            deviceResults[i] = new CUdeviceptr();
+            cuMemAlloc(deviceResults[i], (long)chunkSize * Sizeof.FLOAT);
+            hostResultPtrs[i] = new Pointer();
+            cuMemHostAlloc(hostResultPtrs[i], (long)chunkSize * Sizeof.FLOAT, 0);
+            hostResultBuffers[i] = hostResultPtrs[i].getByteBuffer(0, (long)chunkSize * Sizeof.FLOAT).asFloatBuffer();
         }
-
-        var chunkSize = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
-        var deviceResults = new CUdeviceptr[NUM_STREAMS];
-        var hostResults = new float[NUM_STREAMS][];
         
         var module = new CUmodule();
         cuModuleLoad(module, PTX_FILENAME);
@@ -213,10 +222,6 @@ public class FourierCalculator4 implements FourierTest {
         for (var i = 0; i < NUM_STREAMS; i++) {
             var startIdx = i * chunkSize;
             var currentChunkSize = Math.min(chunkSize, LENGTH - startIdx);
-
-            deviceResults[i] = new CUdeviceptr();
-            cuMemAlloc(deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
-            hostResults[i] = new float[currentChunkSize];
 
             var chunkTmin = TMIN + startIdx * DELTA;
             var kernelParameters = Pointer.to(
@@ -240,8 +245,7 @@ public class FourierCalculator4 implements FourierTest {
                 0, streams[i],
                 kernelParameters, null
             );
-
-            cuMemcpyDtoH(Pointer.to(hostResults[i]), deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
+            cuMemcpyDtoH(hostResultPtrs[i], deviceResults[i], (long)currentChunkSize * Sizeof.FLOAT);
         }
         
         for (var stream : streams) {
@@ -250,6 +254,7 @@ public class FourierCalculator4 implements FourierTest {
 
         for (var i = 0; i < NUM_STREAMS; i++) {
             cuMemFree(deviceResults[i]);
+            cuMemFreeHost(hostResultPtrs[i]);
             cuStreamDestroy(streams[i]);
         }
         

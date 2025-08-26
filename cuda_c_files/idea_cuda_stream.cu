@@ -28,14 +28,14 @@ __global__ void fourier(
     int stream_offset,
     int stream_size)
 {
-    auto idx_local = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx_local = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx_local >= stream_size) return;
-    auto idx_global = idx_local + stream_offset;
-    auto t = tmin + idx_global * delta;
-    auto sum = 0.0f;
-    for (auto k = 1; k <= coefficients; ++k) {
-        auto angle = (2 * k - 1) * pi_over_T * t;
-        auto denominator = 4.0f * k * k - 4.0f * k + 1.0f;
+    int idx_global = idx_local + stream_offset;
+    float t = tmin + idx_global * delta;
+    float sum = 0.0f;
+    for (int k = 1; k <= coefficients; ++k) {
+        float angle = (2 * k - 1) * pi_over_T * t;
+        float denominator = 4.0f * k * k - 4.0f * k + 1.0f;
         sum += cosf(angle) / denominator;
     }
     results[idx_local] = T * 0.5f - result_coefficient * sum;

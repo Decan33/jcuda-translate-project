@@ -35,10 +35,10 @@ void initConstantMemory(int coefficients, float tmin, float tmax, int length, fl
 
 __global__ void fourier(int start_idx, int end_idx, float *results)
 {
-    auto idx = start_idx + blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = start_idx + blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= end_idx) return;
-    auto t = d_params[0] + idx * d_params[4];
-    auto sum = 0.0f;
+    float t = d_params[0] + idx * d_params[4];
+    float sum = 0.0f;
     extern __shared__ float s_angles[];
     int coeff = static_cast<int>(d_params[3]);
     if (coeff > MAX_COEFFICIENTS) coeff = MAX_COEFFICIENTS;

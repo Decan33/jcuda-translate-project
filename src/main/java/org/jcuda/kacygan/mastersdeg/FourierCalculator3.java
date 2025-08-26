@@ -31,6 +31,8 @@ import static jcuda.driver.JCudaDriver.cuModuleLoad;
 import static jcuda.driver.JCudaDriver.cuStreamCreate;
 import static jcuda.driver.JCudaDriver.cuStreamDestroy;
 import static jcuda.driver.JCudaDriver.cuStreamSynchronize;
+import static jcuda.driver.JCudaDriver.cuMemHostAlloc;
+import static jcuda.driver.JCudaDriver.cuMemFreeHost;
 
 @SuppressWarnings("java:S106")
 public class FourierCalculator3 implements FourierTest {
@@ -75,8 +77,8 @@ public class FourierCalculator3 implements FourierTest {
 
             var streams = new CUstream[NUM_STREAMS];
             var deviceChunks = new CUdeviceptr[NUM_STREAMS];
-            var hostChunks = new float[NUM_STREAMS][];
-            
+            var hostChunkPtrs = new Pointer[NUM_STREAMS];
+            var hostChunkBuffers = new java.nio.FloatBuffer[NUM_STREAMS];
             for (var i = 0; i < NUM_STREAMS; i++) {
                 streams[i] = new CUstream();
                 cuStreamCreate(streams[i], 0);
@@ -87,7 +89,9 @@ public class FourierCalculator3 implements FourierTest {
                 
                 deviceChunks[i] = new CUdeviceptr();
                 cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
-                hostChunks[i] = new float[currentChunkSize];
+                hostChunkPtrs[i] = new Pointer();
+                cuMemHostAlloc(hostChunkPtrs[i], (long) currentChunkSize * Sizeof.FLOAT, 0);
+                hostChunkBuffers[i] = hostChunkPtrs[i].getByteBuffer(0, (long) currentChunkSize * Sizeof.FLOAT).asFloatBuffer();
             }
 
             var prepEnd = System.nanoTime();
@@ -153,8 +157,7 @@ public class FourierCalculator3 implements FourierTest {
             cuEventCreate(copyStop, 0);
             cuEventRecord(copyStart, null);
             for (var i = 0; i < NUM_STREAMS; i++) {
-                cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                        (long) hostChunks[i].length * Sizeof.FLOAT, streams[i]);
+                cuMemcpyDtoHAsync(hostChunkPtrs[i], deviceChunks[i], (long) hostChunkBuffers[i].capacity() * Sizeof.FLOAT, streams[i]);
             }
             for (var stream : streams) {
                 cuStreamSynchronize(stream);
@@ -171,6 +174,7 @@ public class FourierCalculator3 implements FourierTest {
 
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemFree(deviceChunks[i]);
+                cuMemFreeHost(hostChunkPtrs[i]);
                 cuStreamDestroy(streams[i]);
             }
             
@@ -253,7 +257,8 @@ public class FourierCalculator3 implements FourierTest {
 
         var streams = new CUstream[NUM_STREAMS];
         var deviceChunks = new CUdeviceptr[NUM_STREAMS];
-        var hostChunks = new float[NUM_STREAMS][];
+        var hostChunkPtrs = new Pointer[NUM_STREAMS];
+        var hostChunkBuffers = new java.nio.FloatBuffer[NUM_STREAMS];
         for (var i = 0; i < NUM_STREAMS; i++) {
             streams[i] = new CUstream();
             cuStreamCreate(streams[i], 0);
@@ -261,12 +266,12 @@ public class FourierCalculator3 implements FourierTest {
             var startIdx = i * chunkSize;
             var endIdx = Math.min(startIdx + chunkSize, LENGTH);
             var currentChunkSize = endIdx - startIdx;
-            
             deviceChunks[i] = new CUdeviceptr();
             cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
-            hostChunks[i] = new float[currentChunkSize];
+            hostChunkPtrs[i] = new Pointer();
+            cuMemHostAlloc(hostChunkPtrs[i], (long) currentChunkSize * Sizeof.FLOAT, 0);
+            hostChunkBuffers[i] = hostChunkPtrs[i].getByteBuffer(0, (long) currentChunkSize * Sizeof.FLOAT).asFloatBuffer();
         }
-
         for (var i = 0; i < NUM_STREAMS; i++) {
             var startIdx = i * chunkSize;
             var endIdx = Math.min(startIdx + chunkSize, LENGTH);
@@ -299,15 +304,14 @@ public class FourierCalculator3 implements FourierTest {
                 THREADS_PER_BLOCK, 1, 1,
                 sharedMemSize, streams[i],
                 kernelParams, null);
-            cuMemcpyDtoHAsync(Pointer.to(hostChunks[i]), deviceChunks[i],
-                    (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
+            cuMemcpyDtoHAsync(hostChunkPtrs[i], deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
         }
         for (var stream : streams) {
             cuStreamSynchronize(stream);
         }
-
         for (var i = 0; i < NUM_STREAMS; i++) {
             cuMemFree(deviceChunks[i]);
+            cuMemFreeHost(hostChunkPtrs[i]);
             cuStreamDestroy(streams[i]);
         }
         cuCtxDestroy(context);

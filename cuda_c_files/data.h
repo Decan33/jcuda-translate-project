@@ -12,5 +12,5 @@ constexpr float pi_sq = pi * pi;
 constexpr float pi_over_T = pi / T;
 constexpr float pi_squared = pi * pi;
 constexpr float result_coefficient = (4.0f * T) / pi_sq;
-constexpr int NUM_STREAMS = 4;
+constexpr int NUM_STREAMS = 8;
 constexpr bool logReps = 0;

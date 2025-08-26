@@ -19,12 +19,12 @@ __global__ void fourier(float* results)
 {
     __shared__ float shared_coefficients[MAX_COEFFICIENTS];
 
-    auto tid = blockIdx.x * blockDim.x + threadIdx.x;
-    auto idx = threadIdx.x;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = threadIdx.x;
 
-    for (auto k = idx; k < const_coefficients; k += blockDim.x)
+    for (int k = idx; k < const_coefficients; k += blockDim.x)
     {
-        auto denominator = 4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f;
+        float denominator = 4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f;
         shared_coefficients[k] = 1.0f / denominator;
     }
 
@@ -32,13 +32,13 @@ __global__ void fourier(float* results)
 
     if (tid >= gridDim.x * blockDim.x) return;
 
-    auto t = const_tmin + tid * const_delta;
-    auto sum = 0.0f;
+    float t = const_tmin + tid * const_delta;
+    float sum = 0.0f;
 
     for (auto k = 1; k <= const_coefficients; ++k)
     {
-        auto angle = (2 * k - 1) * const_pi_over_T * t;
-        auto numerator = cosf(angle);
+        float angle = (2 * k - 1) * const_pi_over_T * t;
+        float numerator = cosf(angle);
         sum += numerator * shared_coefficients[k - 1];
     }
 
