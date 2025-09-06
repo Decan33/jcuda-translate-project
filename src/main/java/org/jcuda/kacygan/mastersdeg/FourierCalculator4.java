@@ -30,20 +30,19 @@ public class FourierCalculator4 implements FourierTest {
         var kernelTimes = new double[NUM_REPS];
         var copyTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
+
+        var device = new CUdevice();
+        cuDeviceGet(device, 0);
+
+        var context = new CUcontext();
+        cuCtxCreate(context, 0, device);
         
         var startWholeTime = System.nanoTime();
-
         for (var rep = 0; rep < NUM_REPS; rep++) {
             var prepStart = System.nanoTime();
             
             JCudaDriver.setExceptionsEnabled(true);
             cuInit(0);
-
-            var device = new CUdevice();
-            cuDeviceGet(device, 0);
-
-            var context = new CUcontext();
-            cuCtxCreate(context, 0, device);
             
             var streams = new CUstream[NUM_STREAMS];
             for (var i = 0; i < NUM_STREAMS; i++) {
@@ -134,12 +133,12 @@ public class FourierCalculator4 implements FourierTest {
                 cuMemFreeHost(hostResultPtrs[i]);
                 cuStreamDestroy(streams[i]);
             }
-
-            cuCtxDestroy(context);
             
             var deleteEnd = System.nanoTime();
             deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
         }
+
+        cuCtxDestroy(context);
         
         var endWholeTime = System.nanoTime();
 

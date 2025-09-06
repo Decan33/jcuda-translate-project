@@ -54,6 +54,12 @@ public class FourierCalculatorPinned implements FourierTest{
             double[] kernelTimes = new double[NUM_REPS];
             double[] copyTimes = new double[NUM_REPS];
             double[] deleteTimes = new double[NUM_REPS];
+
+            CUcontext context = new CUcontext();
+
+            CUdevice device = new CUdevice();
+            cuDeviceGet(device, 0);
+            cuCtxCreate(context, 0, device);
             
             long startWholeTime = System.nanoTime();
 
@@ -62,15 +68,7 @@ public class FourierCalculatorPinned implements FourierTest{
                 
                 JCudaDriver.setExceptionsEnabled(true);
                 cuInit(0);
-                
-                CUdevice device = new CUdevice();
-                cuDeviceGet(device, 0);
-                
-                CUcontext context = new CUcontext();
-                cuCtxCreate(context, 0, device);
-                
-                float delta = (TMAX - TMIN) / (LENGTH - 1);
-                
+
                 CUdeviceptr deviceResults = new CUdeviceptr();
                 cuMemAlloc(deviceResults, (long)LENGTH * Sizeof.FLOAT);
                 
@@ -82,7 +80,7 @@ public class FourierCalculatorPinned implements FourierTest{
                 
                 Pointer kernelParameters = Pointer.to(
                     Pointer.to(new float[]{TMIN}),
-                    Pointer.to(new float[]{delta}),
+                    Pointer.to(new float[]{DELTA}),
                     Pointer.to(new int[]{LENGTH}),
                     Pointer.to(new int[]{COEFFICIENTS}),
                     Pointer.to(new float[]{PI}),
@@ -136,12 +134,14 @@ public class FourierCalculatorPinned implements FourierTest{
                 long deleteStart = System.nanoTime();
                 cudaFreeHost(hostResults);
                 cuMemFree(deviceResults);
-                cuCtxDestroy(context);
                 long deleteEnd = System.nanoTime();
                 deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
             }
             
             long endWholeTime = System.nanoTime();
+
+            cuCtxDestroy(context);
+
             logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
             
         } catch (Exception e) {

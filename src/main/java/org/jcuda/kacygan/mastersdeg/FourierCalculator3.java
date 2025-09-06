@@ -53,22 +53,21 @@ public class FourierCalculator3 implements FourierTest {
         var copyTimes = new double[NUM_REPS];
         var deleteTimes = new double[NUM_REPS];
 
+        JCudaDriver.setExceptionsEnabled(true);
+        cuInit(0);
+
+        var device = new CUdevice();
+        cuDeviceGet(device, 0);
+
+        var context = new CUcontext();
+        cuCtxCreate(context, 0, device);
+
         var startWholeTime = System.nanoTime();
         
         for (var rep = 0; rep < NUM_REPS; rep++) {
             var prepStart = System.nanoTime();
-            
-            JCudaDriver.setExceptionsEnabled(true);
-            cuInit(0);
 
-            var device = new CUdevice();
-            cuDeviceGet(device, 0);
 
-            var context = new CUcontext();
-            cuCtxCreate(context, 0, device);
-
-            var chunkSize = LENGTH / NUM_STREAMS;
-            
             var module = new CUmodule();
             cuModuleLoad(module, PTX_FILENAME);
 
@@ -83,8 +82,8 @@ public class FourierCalculator3 implements FourierTest {
                 streams[i] = new CUstream();
                 cuStreamCreate(streams[i], 0);
 
-                var startIdx = i * chunkSize;
-                var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+                var startIdx = i * CHUNK_SIZE;
+                var endIdx = Math.min(startIdx + CHUNK_SIZE, LENGTH);
                 var currentChunkSize = endIdx - startIdx;
                 
                 deviceChunks[i] = new CUdeviceptr();
@@ -104,8 +103,8 @@ public class FourierCalculator3 implements FourierTest {
             cuEventRecord(kernelStart, null);
 
             for (var i = 0; i < NUM_STREAMS; i++) {
-                var startIdx = i * chunkSize;
-                var endIdx = Math.min(startIdx + chunkSize, LENGTH);
+                var startIdx = i * CHUNK_SIZE;
+                var endIdx = Math.min(startIdx + CHUNK_SIZE, LENGTH);
                 var currentChunkSize = endIdx - startIdx;
                 
                 setConstant(module, "d_params", new float[]{
@@ -177,8 +176,6 @@ public class FourierCalculator3 implements FourierTest {
                 cuMemFreeHost(hostChunkPtrs[i]);
                 cuStreamDestroy(streams[i]);
             }
-            
-            cuCtxDestroy(context);
 
             var deleteEnd = System.nanoTime();
 
@@ -186,6 +183,8 @@ public class FourierCalculator3 implements FourierTest {
         }
         
         var endWholeTime = System.nanoTime();
+
+        cuCtxDestroy(context);
 
         logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
     }

@@ -18,5 +18,7 @@ public interface FourierTest {
     int NUM_STREAMS = 8;
     boolean logReps = false;
 
+    int CHUNK_SIZE = LENGTH / NUM_STREAMS;
+
     void runTest();
 }
