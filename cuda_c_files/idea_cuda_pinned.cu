@@ -92,7 +92,7 @@ int main()
         float* result_device;
         CUDA_CHECK(cudaMalloc((void**)&result_device, length * sizeof(float)));
 
-        auto blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        int blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
         auto prep_end = std::chrono::high_resolution_clock::now();
         prep_times.push_back(std::chrono::duration<double>(prep_end - prep_start).count());
