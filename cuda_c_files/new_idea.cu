@@ -3,8 +3,12 @@
 #include <iostream>
 #include <chrono>
 
-#define SIZE (1LL * 1024 * 1024 * 1024)
-#define THREADS_PER_BLOCK 256
+constexpr long long int SIZE = (1LL * 1024 * 1024 * 1024);
+constexpr int THREADS_PER_BLOCK = 256;
+constexpr int REPS = 10;
+constexpr int N = 10;
+
+enum MemoryType {PINNED, NORMAL};
 
 __global__ void addOneKernel(unsigned char* data, size_t size) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -13,54 +17,93 @@ __global__ void addOneKernel(unsigned char* data, size_t size) {
     }
 }
 
-void version1(int N) {
-	auto REPS = 10;
+MemoryType memoryTypeUsed = PINNED;
+
+
+void version1() {
 	auto start = std::chrono::high_resolution_clock::now();
-	for(auto rep = 0; rep < REPS; rep++) {
-		uint64_t dataSize = SIZE;
-		unsigned char *h_data = (unsigned char*)malloc(dataSize);
-		unsigned char *d_data;
+	if(NORMAL == memoryTypeUsed){
+	    for(auto rep = 0; rep < REPS; rep++) {
+        		unsigned char *h_data = (unsigned char*)malloc(SIZE);
+        		unsigned char *d_data;
 
-		memset(h_data, 0, dataSize);
-		cudaMalloc(&d_data, dataSize);
+        		memset(h_data, 0, SIZE);
+        		cudaMalloc(&d_data, SIZE);
 
-		cudaMemcpy(d_data, h_data, dataSize, cudaMemcpyHostToDevice);
+        		cudaMemcpy(d_data, h_data, SIZE, cudaMemcpyHostToDevice);
 
-		int blocks = (dataSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-		for (int i = 0; i < N; ++i) {
-			addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, dataSize);
-		}
+        		int blocks = (SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        		for (int i = 0; i < N; ++i) {
+        			addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, SIZE);
+        		}
 
-		cudaMemcpy(h_data, d_data, dataSize, cudaMemcpyDeviceToHost);
+        		cudaMemcpy(h_data, d_data, SIZE, cudaMemcpyDeviceToHost);
 
-		cudaFree(d_data);
-		free(h_data);
+        		cudaFree(d_data);
+        		free(h_data);
+        	}
+	} else {
+	    for(auto rep = 0; rep < REPS; rep++) {
+        	unsigned char *h_data = (unsigned char*)malloc(SIZE);
+        	unsigned char *d_data;
+
+        	memset(h_data, 0, SIZE);
+        	cudaHostAlloc(&d_data, SIZE, cudaHostAllocDefault);
+
+        	cudaMemcpy(d_data, h_data, SIZE, cudaMemcpyHostToDevice);
+
+        	int blocks = (SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        	for (int i = 0; i < N; ++i) {
+        		addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, SIZE);
+        	}
+
+        	cudaMemcpy(h_data, d_data, SIZE, cudaMemcpyDeviceToHost);
+
+        	cudaFreeHost(d_data);
+        	free(h_data);
+        }
 	}
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = end - start;
 	std::cout << "Version 1 CPU time: " << elapsed.count() << "s\n";
-
 }
 
-void version2(int N) {
-	auto REPS = 10;
+void version2() {
 	auto start = std::chrono::high_resolution_clock::now();
-	for(auto rep = 0; rep < REPS; rep++) {
-		uint64_t dataSize = SIZE;
-		unsigned char *h_data = (unsigned char*)malloc(dataSize);
-		unsigned char *d_data;
+	if(NORMAL==memoryTypeUsed) {
+	    for(auto rep = 0; rep < REPS; rep++) {
+        	unsigned char *h_data = (unsigned char*)malloc(SIZE);
+        	unsigned char *d_data;
 
-		memset(h_data, 0, dataSize);
-		cudaMalloc(&d_data, dataSize);
+        	memset(h_data, 0, SIZE);
+        	cudaMalloc(&d_data, SIZE);
 
-		int blocks = (dataSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-		for (int i = 0; i < N; ++i) {
-			cudaMemcpy(d_data, h_data, dataSize, cudaMemcpyHostToDevice);
-			addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, dataSize);
-			cudaMemcpy(h_data, d_data, dataSize, cudaMemcpyDeviceToHost);
-		}
-		cudaFree(d_data);
-		free(h_data);
+        	int blocks = (SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        	for (int i = 0; i < N; ++i) {
+        		cudaMemcpy(d_data, h_data, SIZE, cudaMemcpyHostToDevice);
+        		addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, SIZE);
+        		cudaMemcpy(h_data, d_data, SIZE, cudaMemcpyDeviceToHost);
+        	}
+        	cudaFree(d_data);
+        	free(h_data);
+        }
+	}else {
+	    for(auto rep = 0; rep < REPS; rep++) {
+        	unsigned char *h_data = (unsigned char*)malloc(SIZE);
+        	unsigned char *d_data;
+
+        	memset(h_data, 0, SIZE);
+        	cudaHostAlloc(&d_data, SIZE, cudaHostAllocDefault);
+
+        	int blocks = (SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        	for (int i = 0; i < N; ++i) {
+        		cudaMemcpy(d_data, h_data, SIZE, cudaMemcpyHostToDevice);
+        		addOneKernel<<<blocks, THREADS_PER_BLOCK>>>(d_data, SIZE);
+        		cudaMemcpy(h_data, d_data, SIZE, cudaMemcpyDeviceToHost);
+        	}
+        	cudaFreeHost(d_data);
+        	free(h_data);
+        }
 	}
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = end - start;
@@ -68,8 +111,9 @@ void version2(int N) {
 }
 
 int main() {
-    int N = 10; 
-    version1(N);
-    version2(N);
+    for(int i = 0; i < 5; i++) {
+        version1();
+        version2();
+    }
     return 0;
 }

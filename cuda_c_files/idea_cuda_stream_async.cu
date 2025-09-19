@@ -170,12 +170,33 @@ int main()
         delete_sum += delete_times[i];
         copy_sum += copy_times[i];
     }
-    printf("\nAverages over %zu repetitions:\n", prep_times.size());
-    printf("  Avg preparation time: %.6f s\n", prep_sum / prep_times.size());
-    printf("  Avg kernel execution time: %.6f s\n", kernel_sum / kernel_times.size());
-    printf("  Avg data copy time: %.6f s\n", copy_sum / copy_times.size());
-    printf("  Avg memory deletion time: %.6f s\n", delete_sum / delete_times.size());
-    printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
-    printf("=========================\n\n");
+
+    auto n = static_cast<double>(prep_times.size());
+        double prep_avg = prep_sum / n;
+        double kernel_avg = kernel_sum / n;
+        double copy_avg = copy_sum / n;
+        double delete_avg = delete_sum / n;
+        double prep_var = 0, kernel_var = 0, copy_var = 0, delete_var = 0;
+
+        for (auto i = 0u; i < prep_times.size(); ++i) {
+            prep_var += (prep_times[i] - prep_avg) * (prep_times[i] - prep_avg);
+            kernel_var += (kernel_times[i] - kernel_avg) * (kernel_times[i] - kernel_avg);
+            copy_var += (copy_times[i] - copy_avg) * (copy_times[i] - copy_avg);
+            delete_var += (delete_times[i] - delete_avg) * (delete_times[i] - delete_avg);
+        }
+
+        double prep_std = std::sqrt(prep_var / n);
+        double kernel_std = std::sqrt(kernel_var / n);
+        double copy_std = std::sqrt(copy_var / n);
+        double delete_std = std::sqrt(delete_var / n);
+
+        printf("=========================\n\n");
+        printf("\nAverages over %zu repetitions:\n", prep_times.size());
+        printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prep_avg, prep_std);
+        printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernel_avg, kernel_std);
+        printf("  Avg data copy time: %.6f s (stddev: %.6f s)\n", copy_avg, copy_std);
+        printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delete_avg, delete_std);
+        printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
+        printf("=========================\n\n");
     return 0;
 }
