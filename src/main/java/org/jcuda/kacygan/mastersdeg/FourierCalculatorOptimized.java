@@ -29,8 +29,8 @@ import static jcuda.driver.JCudaDriver.cuEventSynchronize;
 import static jcuda.driver.JCudaDriver.cuEventDestroy;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator2 implements FourierTest {
-    private static final String KERNEL_PTX_FILENAME = "Fourier2.ptx";
+public class FourierCalculatorOptimized implements FourierTest {
+    private static final String KERNEL_PTX_FILENAME = "FourierOptimized.ptx";
 
     @Override
     public void runTest() {

@@ -31,7 +31,7 @@ import static jcuda.runtime.JCuda.cudaHostAllocDefault;
 
 @SuppressWarnings("java:S106")
 public class FourierCalculatorPinned implements FourierTest{
-    private static final String KERNEL_PTX_FILENAME = "Fourier.ptx";
+    private static final String KERNEL_PTX_FILENAME = "FourierRaw.ptx";
     private static final int CHUNK_SIZE = 250_000_000;
 
     @Override

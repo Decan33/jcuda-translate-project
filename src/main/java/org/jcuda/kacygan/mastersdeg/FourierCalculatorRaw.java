@@ -13,8 +13,8 @@ import jcuda.driver.JCudaDriver;
 import static jcuda.driver.JCudaDriver.*;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator implements FourierTest {
-    private static final String KERNEL_PTX_FILENAME = "Fourier.ptx";
+public class FourierCalculatorRaw implements FourierTest {
+    private static final String KERNEL_PTX_FILENAME = "FourierRaw.ptx";
 
     private void logTimings(double[] prep, double[] kernel, double[] copy, double[] del, double wholeTime) {
         if (logReps) {

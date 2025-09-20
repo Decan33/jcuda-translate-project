@@ -14,9 +14,9 @@ import jcuda.driver.JCudaDriver;
 import static jcuda.driver.JCudaDriver.*;
 
 @SuppressWarnings("java:S106")
-public class FourierCalculator4 implements FourierTest {
+public class FourierCalculatorStreams implements FourierTest {
     //Fourier: streams version
-    private static final String PTX_FILENAME = "Fourier3.ptx";
+    private static final String PTX_FILENAME = "FourierRaw.ptx";
 
     @Override
     public void runTest() {
@@ -91,9 +91,7 @@ public class FourierCalculator4 implements FourierTest {
                     Pointer.to(new float[]{PI_OVER_T}),
                     Pointer.to(new float[]{RESULT_COEFFICIENT}),
                     Pointer.to(new float[]{PERIOD}),
-                    Pointer.to(deviceResults[i]),
-                    Pointer.to(new int[]{startIdx}),
-                    Pointer.to(new int[]{currentChunkSize})
+                    Pointer.to(deviceResults[i])
                 );
 
                 var blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
@@ -232,9 +230,7 @@ public class FourierCalculator4 implements FourierTest {
                 Pointer.to(new float[]{PI_OVER_T}),
                 Pointer.to(new float[]{RESULT_COEFFICIENT}),
                 Pointer.to(new float[]{PERIOD}),
-                Pointer.to(deviceResults[i]),
-                Pointer.to(new int[]{startIdx}),
-                Pointer.to(new int[]{currentChunkSize})
+                Pointer.to(deviceResults[i])
             );
 
             var blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
