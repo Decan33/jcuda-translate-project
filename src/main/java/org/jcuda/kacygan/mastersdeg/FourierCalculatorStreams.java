@@ -25,12 +25,6 @@ public class FourierCalculatorStreams implements FourierTest {
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
         System.out.println("Cold run completed.\n");
-        
-        var prepTimes = new double[NUM_REPS];
-        var kernelTimes = new double[NUM_REPS];
-        var copyTimes = new double[NUM_REPS];
-        var deleteTimes = new double[NUM_REPS];
-
         var device = new CUdevice();
         cuDeviceGet(device, 0);
 
@@ -39,8 +33,7 @@ public class FourierCalculatorStreams implements FourierTest {
         
         var startWholeTime = System.nanoTime();
         for (var rep = 0; rep < NUM_REPS; rep++) {
-            var prepStart = System.nanoTime();
-            
+
             JCudaDriver.setExceptionsEnabled(true);
             cuInit(0);
             
@@ -60,16 +53,6 @@ public class FourierCalculatorStreams implements FourierTest {
 
             var function = new CUfunction();
             cuModuleGetFunction(function, module, FUNCTION_NAME);
-
-            var prepEnd = System.nanoTime();
-            prepTimes[rep] = (prepEnd - prepStart) / 1e9;
-            
-            var kernelStart = new CUevent();
-            var kernelStop = new CUevent();
-
-            cuEventCreate(kernelStart, 0);
-            cuEventCreate(kernelStop, 0);
-            cuEventRecord(kernelStart, null);
 
             for (var i = 0; i < NUM_STREAMS; i++) {
                 var startIdx = i * chunkSize;
@@ -107,82 +90,24 @@ public class FourierCalculatorStreams implements FourierTest {
                 cuStreamSynchronize(stream);
             }
 
-            cuEventRecord(kernelStop, null);
-            cuEventSynchronize(kernelStop);
-            var kernelMs = new float[1];
-
-            cuEventElapsedTime(kernelMs, kernelStart, kernelStop);
-            kernelTimes[rep] = kernelMs[0] / THOUSAND;
-            
-            cuEventDestroy(kernelStart);
-            cuEventDestroy(kernelStop);
-
-            var copyStart = System.nanoTime();
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemcpyDtoH(hostResultPtrs[i], deviceResults[i], (long)Math.min(chunkSize, LENGTH - i * chunkSize) * Sizeof.FLOAT);
             }
-            var copyEnd = System.nanoTime();
-            copyTimes[rep] = (copyEnd - copyStart) / 1e9;
 
-            var deleteStart = System.nanoTime();
-            
+
             for (var i = 0; i < NUM_STREAMS; i++) {
                 cuMemFree(deviceResults[i]);
                 cuMemFreeHost(hostResultPtrs[i]);
                 cuStreamDestroy(streams[i]);
             }
             
-            var deleteEnd = System.nanoTime();
-            deleteTimes[rep] = (deleteEnd - deleteStart) / 1e9;
         }
 
         cuCtxDestroy(context);
         
         var endWholeTime = System.nanoTime();
 
-        logTimings(prepTimes, kernelTimes, copyTimes, deleteTimes, endWholeTime - startWholeTime);
-    }
-
-    private void logTimings(double[] prep, double[] kernel, double[] copy, double[] del, double wholeTime) {
-        if (logReps) {
-            for (var i = 0; i < prep.length; i++) {
-                System.out.printf("  Repetition %d:\n", i + 1);
-                System.out.printf("  Preparation time: %.6f s\n", prep[i]);
-                System.out.printf("  Kernel execution time: %.6f s\n", kernel[i]);
-                System.out.printf("  Data copy time: %.6f s\n", copy[i]);
-                System.out.printf("  Memory deletion time: %.6f s\n", del[i]);
-            }
-        }
-
-        var n = prep.length;
-        var prepAvg = mean(prep);
-        var kernelAvg = mean(kernel);
-        var copyAvg = mean(copy);
-        var delAvg = mean(del);
-        var prepStd = standardDeviation(prep, prepAvg);
-        var kernelStd = standardDeviation(kernel, kernelAvg);
-        var copyStd = standardDeviation(copy, copyAvg);
-        var delStd = standardDeviation(del, delAvg);
-
-        System.out.printf("\nAverages over %d repetitions:\n", n);
-        System.out.printf("  Avg preparation time: %.6f s (stddev: %.6f s)\n", prepAvg, prepStd);
-        System.out.printf("  Avg kernel execution time: %.6f s (stddev: %.6f s)\n", kernelAvg, kernelStd);
-        System.out.printf("  Avg data copy time: %.6f s (stddev: %.6f s)\n", copyAvg, copyStd);
-        System.out.printf("  Avg memory deletion time: %.6f s (stddev: %.6f s)\n", delAvg, delStd);
-        System.out.printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, wholeTime / 1e9);
-        System.out.println("=========================");
-    }
-
-    private double mean(double[] arr) {
-        var sum = 0.0;
-        for (var v : arr) sum += v;
-        return sum / arr.length;
-    }
-
-    private double standardDeviation(double[] arr, double mean) {
-        var sum = 0.0;
-        for (var v : arr) sum += (v - mean) * (v - mean);
-        return Math.sqrt(sum / arr.length);
+        System.out.printf("  Whole time taken for %d reps: %.6f s\n", NUM_REPS, (endWholeTime - startWholeTime) / 1e9);
     }
     
     private void performColdRun() {
