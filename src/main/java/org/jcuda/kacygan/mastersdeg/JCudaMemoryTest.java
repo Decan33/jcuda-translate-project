@@ -17,7 +17,7 @@ public class JCudaMemoryTest {
     public static final int BLOCKS = (int) ((SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
     static final int N = 10;
     static final int REPS = 10;
-    static final MemoryType memoryTypeUsed = MemoryType.PINNED;
+    static final MemoryType memoryTypeUsed = MemoryType.NORMAL;
     private static CUmodule module = new CUmodule();
     private static CUfunction function = new CUfunction();
 
