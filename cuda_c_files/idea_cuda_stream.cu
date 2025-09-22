@@ -6,15 +6,6 @@
 #include <cstring>
 #include "data.h"
 
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " << cudaGetErrorString(err) << std::endl; \
-            exit(EXIT_FAILURE); \
-        } \
-    } while (0)
-
 __global__ void fourier(
     float tmin,
     float delta,
@@ -43,6 +34,7 @@ __global__ void fourier(
 
 void performColdRun(float tmin, float tmax, int length, int coefficients, float T, 
                    float delta, float pi, float pi_over_T, float result_coefficient) {
+
     int chunkSize = (length + NUM_STREAMS - 1) / NUM_STREAMS;
     cudaStream_t streams[NUM_STREAMS];
     float* d_results[NUM_STREAMS];
@@ -58,11 +50,13 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
         int startIdx = i * chunkSize;
         int currentChunkSize = std::min(chunkSize, length - startIdx);
         int blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
         fourier<<<blocksPerGrid, THREADS_PER_BLOCK, 0, streams[i]>>>(
-            tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T,
-            d_results[i], startIdx, currentChunkSize
+                                                                        tmin, delta, length, 
+                                                                        coefficients, pi, pi_over_T, 
+                                                                        result_coefficient, T, d_results[i], 
+                                                                        startIdx, currentChunkSize
         );
-        CUDA_CHECK(cudaGetLastError());
     }
 
     for (int i = 0; i < NUM_STREAMS; ++i) {
@@ -82,15 +76,10 @@ void performColdRun(float tmin, float tmax, int length, int coefficients, float 
     }
 }
 
-int main() {
-    printf("Performing cold run to warm up GPU...\n");
-    performColdRun(tmin, tmax, length, coefficients, T, delta, pi, pi_over_T, result_coefficient);
-    printf("Cold run completed.\n\n");
+void runTest() {
     std::vector<float> hAll(length);
 
     int chunkSize = (length + NUM_STREAMS - 1) / NUM_STREAMS;
-    auto start_reps = std::chrono::high_resolution_clock::now();
-    for (auto rep = 0; rep < NUM_REPS; ++rep) {
         cudaStream_t streams[NUM_STREAMS];
         float* d_results[NUM_STREAMS];
         float* h_results[NUM_STREAMS];
@@ -104,11 +93,13 @@ int main() {
             int startIdx = i * chunkSize;
             int currentChunkSize = std::min(chunkSize, length - startIdx);
             int blocksPerGrid = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            
             fourier<<<blocksPerGrid, THREADS_PER_BLOCK, 0, streams[i]>>>(
-                tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T,
-                d_results[i], startIdx, currentChunkSize
+                tmin, delta, length, 
+                coefficients, pi, pi_over_T, 
+                result_coefficient, T, d_results[i], 
+                startIdx, currentChunkSize
             );
-            CUDA_CHECK(cudaGetLastError());
         }
         for (int i = 0; i < NUM_STREAMS; ++i) {
             CUDA_CHECK(cudaStreamSynchronize(streams[i]));
@@ -136,8 +127,16 @@ int main() {
             CUDA_CHECK(cudaFreeHost(h_results[i]));
             CUDA_CHECK(cudaStreamDestroy(streams[i]));
         }
-    }
+}
 
+int main() {
+    printf("Performing cold run to warm up GPU...\n");
+    performColdRun(tmin, tmax, length, coefficients, T, delta, pi, pi_over_T, result_coefficient);
+    printf("Cold run completed.\n\n");
+    auto start_reps = std::chrono::high_resolution_clock::now();
+    for (int rep = 0; rep < NUM_REPS; rep++) {
+        runTest();
+    }
     auto end_reps = std::chrono::high_resolution_clock::now();
     printf("\n===== Timing Summary =====\n");
 

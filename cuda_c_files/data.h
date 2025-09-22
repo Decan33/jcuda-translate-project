@@ -14,3 +14,15 @@ constexpr float pi_squared = pi * pi;
 constexpr float result_coefficient = (4.0f * T) / pi_sq;
 constexpr int NUM_STREAMS = 8;
 constexpr bool logReps = 0;
+
+const size_t CHUNK_ELEMS = 1u << 20;
+const size_t CHUNK_BYTES = CHUNK_ELEMS * sizeof(float);
+
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << ": " << cudaGetErrorString(err) << std::endl; \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
