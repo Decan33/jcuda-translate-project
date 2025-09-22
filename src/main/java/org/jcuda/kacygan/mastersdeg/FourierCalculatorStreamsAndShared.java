@@ -11,31 +11,17 @@ import java.nio.FloatBuffer;
 
 import static jcuda.driver.JCudaDriver.*;
 
-/**
- * Streams + async version that leverages constant memory (for scalar parameters)
- * and the kernel's shared memory usage. We DO NOT modify the CUDA kernel.
- *
- * Key points:
- *  - Loads one CUmodule per stream so each stream can set its own constant symbols safely.
- *  - Pushes scalar parameters into __constant__ symbols via cuModuleGetGlobal + cuMemcpyHtoDAsync.
- *  - Uses page-locked (pinned) host buffers and cuMemcpyDtoHAsync for overlapped copies.
- *  - Launches kernels in parallel streams and synchronizes at the end.
- *  - Prefers shared memory cache configuration on the kernel.
- */
 @SuppressWarnings("java:S106")
 public class FourierCalculatorStreamsAndShared implements FourierTest {
 
-    // ======== Configuration (adjust to your project’s constants if needed) ========
     private static final String PTX_FILENAME = "FourierOptimized.ptx";
 
-    // Derived chunking
     private static final int    CHUNK_SIZE = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
 
     @Override
     public void runTest() {
         System.out.println("TESTING FOURIER WITH SHARED, CONSTANTS AND STREAMS");
 
-        // Warm-up to mitigate first-use overheads
         System.out.println("Performing cold run to warm up GPU...");
         performColdRun();
         System.out.println("Cold run completed.\n");
@@ -94,7 +80,6 @@ public class FourierCalculatorStreamsAndShared implements FourierTest {
         long endWholeTime = System.nanoTime();
         double wholeTimeSec = (endWholeTime - startWholeTime) / 1e9;
 
-        // Report averages
         System.out.println("\n=========================");
         System.out.printf("Whole time taken for %d reps: %.6f s%n", NUM_REPS, wholeTimeSec);
         System.out.println("=========================");
