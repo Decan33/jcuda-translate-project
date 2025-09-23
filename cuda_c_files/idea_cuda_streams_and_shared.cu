@@ -16,12 +16,20 @@ __constant__ float const_T;
 __constant__ float const_pi_over_T;
 __constant__ float constant_result_coefficient;
 
-__constant__ float const_coeffs[MAX_COEFFICIENTS];
-
 __global__ void fourier(float* results)
 {
+    __shared__ float shared_coefficients[MAX_COEFFICIENTS];
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = threadIdx.x;
+
+    for (int k = idx; k < const_coefficients; k += blockDim.x)
+    {
+        float denominator = 4.0f * (k + 1) * (k + 1) - 4.0f * (k + 1) + 1.0f;
+        shared_coefficients[k] = 1.0f / denominator;
+    }
+
+    __syncthreads();
 
     if (tid >= gridDim.x * blockDim.x) return;
 
@@ -32,20 +40,11 @@ __global__ void fourier(float* results)
     {
         float angle = (2 * k - 1) * const_pi_over_T * t;
         float numerator = cosf(angle);
-
-        sum += numerator * const_coeffs[k - 1];
+        sum += numerator * shared_coefficients[k - 1];
     }
 
     results[tid] = const_T * 0.5f - (constant_result_coefficient * sum);
 }
-
-#define CUDA_CHECK(x) do { \
-  cudaError_t _e = (x); \
-  if (_e != cudaSuccess) { \
-    std::fprintf(stderr, "CUDA error %s at %s:%d: %s\n", #x, __FILE__, __LINE__, cudaGetErrorString(_e)); \
-    std::exit(EXIT_FAILURE); \
-  } \
-} while(0)
 
 static inline dim3 blocksFor(size_t n, int tpb) {
     return dim3(static_cast<unsigned>((n + tpb - 1) / tpb));
@@ -60,16 +59,6 @@ static void setAllConstants()
     CUDA_CHECK(cudaMemcpyToSymbol(const_T, &T, sizeof(T)));
     CUDA_CHECK(cudaMemcpyToSymbol(const_pi_over_T, &pi_over_T, sizeof(pi_over_T)));
     CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(result_coefficient)));
-
-    {
-        std::vector<float> hcoeff(MAX_COEFFICIENTS, 0.0f);
-        for (int k = 0; k < coefficients; ++k) {
-            float kp1 = float(k + 1);
-            float denominator = 4.0f * kp1 * kp1 - 4.0f * kp1 + 1.0f;
-            hcoeff[k] = 1.0f / denominator;
-        }
-        CUDA_CHECK(cudaMemcpyToSymbol(const_coeffs, hcoeff.data(), coefficients * sizeof(float)));
-    }
 }
 
 void performColdRun()
@@ -118,11 +107,13 @@ void runTest()
     float* hStage[NUM_STREAMS] = {nullptr};
     size_t nCount[NUM_STREAMS] = {0};
     size_t startIdx[NUM_STREAMS] = {0};
+    cudaEvent_t doneEvt[NUM_STREAMS];
 
     for (int i = 0; i < NUM_STREAMS; ++i) {
         CUDA_CHECK(cudaStreamCreateWithFlags(&copyStreams[i], cudaStreamNonBlocking));
         CUDA_CHECK(cudaMalloc(&deviceBuffer[i], CHUNK_BYTES));
         CUDA_CHECK(cudaHostAlloc(&hStage[i], CHUNK_BYTES, cudaHostAllocDefault));
+        CUDA_CHECK(cudaEventCreateWithFlags(&doneEvt[i], cudaEventDisableTiming));
     }
 
     size_t base = 0;
@@ -133,7 +124,10 @@ void runTest()
 
         if (chunkIdx >= NUM_STREAMS) {
             size_t bytes = nCount[s] * sizeof(float);
-            CUDA_CHECK(cudaMemcpyAsync(hStage[s], deviceBuffer[s], bytes, cudaMemcpyDeviceToHost, copyStreams[s]));
+            CUDA_CHECK(cudaStreamWaitEvent(copyStreams[s], doneEvt[s], 0));
+
+            CUDA_CHECK(cudaMemcpyAsync(hStage[s], deviceBuffer[s], bytes,
+                                       cudaMemcpyDeviceToHost, copyStreams[s]));
             CUDA_CHECK(cudaStreamSynchronize(copyStreams[s]));
             std::memcpy(&hResult[startIdx[s]], hStage[s], bytes);
         }
@@ -145,11 +139,13 @@ void runTest()
         const float tminChunk = tmin + base * delta;
         CUDA_CHECK(cudaMemcpyToSymbolAsync(const_tmin, &tminChunk, sizeof(tminChunk), 0, cudaMemcpyHostToDevice, sCompute));
 
+        // launch compute for slot s
         dim3 block(THREADS_PER_BLOCK);
         dim3 grid  = blocksFor(nThis, THREADS_PER_BLOCK);
-
         fourier<<<grid, block, 0, sCompute>>>(deviceBuffer[s]);
         CUDA_CHECK(cudaGetLastError());
+
+        CUDA_CHECK(cudaEventRecord(doneEvt[s], sCompute));
 
         base += nThis;
         ++chunkIdx;
@@ -160,9 +156,11 @@ void runTest()
 
     for (int i = startFlush; i < totalChunks; ++i) {
         const size_t s = i % NUM_STREAMS;
-    
         size_t bytes = nCount[s] * sizeof(float);
+
+        CUDA_CHECK(cudaStreamWaitEvent(copyStreams[s], doneEvt[s], 0));
         CUDA_CHECK(cudaMemcpyAsync(hStage[s], deviceBuffer[s], bytes, cudaMemcpyDeviceToHost, copyStreams[s]));
+
         CUDA_CHECK(cudaStreamSynchronize(copyStreams[s]));
         std::memcpy(&hResult[startIdx[s]], hStage[s], bytes);
     }
@@ -171,6 +169,7 @@ void runTest()
         CUDA_CHECK(cudaFree(deviceBuffer[i]));
         CUDA_CHECK(cudaFreeHost(hStage[i]));
         CUDA_CHECK(cudaStreamDestroy(copyStreams[i]));
+            CUDA_CHECK(cudaEventDestroy(doneEvt[i]));
     }
     CUDA_CHECK(cudaStreamDestroy(sCompute));
 }
