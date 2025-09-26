@@ -10,23 +10,23 @@ import static jcuda.driver.JCudaDriver.*;
 import static jcuda.runtime.JCuda.*;
 import static jcuda.runtime.cudaMemcpyKind.*;
 
-public class JCudaMemoryTest {
+public class JCudaMemoryTest implements FourierTest {
 
     static final long SIZE = 1L * 1024 * 1024 * 1024;
     static final Integer THREADS_PER_BLOCK  = 256;
     public static final int BLOCKS = (int) ((SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
     static final int N = 10;
     static final int REPS = 10;
-    static final MemoryType memoryTypeUsed = MemoryType.NORMAL;
+    MemoryType memoryTypeUsed;
     private static CUmodule module = new CUmodule();
     private static CUfunction function = new CUfunction();
 
-    private enum MemoryType {
-        PINNED,
-        NORMAL
+    public JCudaMemoryTest(MemoryType memoryType) {
+        memoryTypeUsed = memoryType;
     }
 
-    public static void main(String[] args) {
+    @Override
+    public void runTest() {
         initJCuda();
 
         System.out.println("Testing " + memoryTypeUsed + " memory mode");
@@ -37,7 +37,7 @@ public class JCudaMemoryTest {
         }
     }
 
-    static void initJCuda() {
+    private void initJCuda() {
         JCuda.setExceptionsEnabled(true);
         JCudaDriver.setExceptionsEnabled(true);
         cuInit(0);
@@ -50,7 +50,7 @@ public class JCudaMemoryTest {
         cuModuleGetFunction(function, module, "addOneKernel");
     }
 
-    static void version1() {
+    private void version1() {
         var hPtr = new Pointer();
         var dPtr = new Pointer();
 
@@ -81,7 +81,7 @@ public class JCudaMemoryTest {
         System.out.printf("Version 1 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
     }
 
-    private static void doFirstVersionCopies(Pointer hPointer, Pointer deviceData) {
+    private void doFirstVersionCopies(Pointer hPointer, Pointer deviceData) {
         for (int rep = 0; rep < REPS; rep++) {
 
             cudaMemcpy(deviceData, hPointer, SIZE, cudaMemcpyHostToDevice);
@@ -93,7 +93,7 @@ public class JCudaMemoryTest {
         }
     }
 
-    static void version2() {
+    private void version2() {
         var hPtr = new Pointer();
         var dPtr = new Pointer();
 
@@ -124,7 +124,7 @@ public class JCudaMemoryTest {
         System.out.printf("Version 2 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
     }
 
-    private static void doSecondVersionCopies(Pointer hostPointer, Pointer deviceData) {
+    private void doSecondVersionCopies(Pointer hostPointer, Pointer deviceData) {
         for (int rep = 0; rep < REPS; rep++) {
             for (int i = 0; i < N; i++) {
                 cudaMemcpy(deviceData, hostPointer, SIZE, cudaMemcpyHostToDevice);
@@ -135,7 +135,7 @@ public class JCudaMemoryTest {
         }
     }
 
-    static void launchAddOneKernel(Pointer data) {
+    void launchAddOneKernel(Pointer data) {
         var kernelParams = Pointer.to(
                 Pointer.to(data),
                 Pointer.to(new long[]{SIZE})

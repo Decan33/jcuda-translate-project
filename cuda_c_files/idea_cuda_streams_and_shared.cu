@@ -46,10 +46,6 @@ __global__ void fourier(float* results)
     results[tid] = const_T * 0.5f - (constant_result_coefficient * sum);
 }
 
-static inline dim3 blocksFor(size_t n, int tpb) {
-    return dim3(static_cast<unsigned>((n + tpb - 1) / tpb));
-}
-
 static void setAllConstants()
 {
     CUDA_CHECK(cudaMemcpyToSymbol(const_delta, &delta, sizeof(delta)));
@@ -61,117 +57,80 @@ static void setAllConstants()
     CUDA_CHECK(cudaMemcpyToSymbol(constant_result_coefficient, &result_coefficient, sizeof(result_coefficient)));
 }
 
+static cudaStream_t streams[NUM_STREAMS];
+static float* dOut[NUM_STREAMS];
+static float* hStage[NUM_STREAMS];
+static bool memory_initialized = false;
+static int chunkSize;
+
+void initializeMemory() {
+    if (memory_initialized) return;
+
+    chunkSize = (length + NUM_STREAMS - 1) / NUM_STREAMS;
+    const size_t chunkBytes = (size_t)chunkSize * sizeof(float);
+
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        CUDA_CHECK(cudaStreamCreateWithFlags(&streams[s], cudaStreamNonBlocking));
+        CUDA_CHECK(cudaMalloc(&dOut[s], chunkBytes));
+        CUDA_CHECK(cudaHostAlloc(&hStage[s], chunkBytes, cudaHostAllocDefault));
+    }
+    memory_initialized = true;
+}
+
 void performColdRun()
 {
-
+    initializeMemory();
     setAllConstants();
     CUDA_CHECK(cudaMemcpyToSymbol(const_tmin, &tmin, sizeof(tmin)));
 
-    float* dOut = nullptr;
-    CUDA_CHECK(cudaMalloc(&dOut, length * sizeof(float)));
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        const int offset = s * chunkSize;
+        const int currentChunk = (offset + chunkSize <= length)
+                                 ? chunkSize : (length - offset);
 
-    cudaStream_t sCompute, copyStreams;
-    CUDA_CHECK(cudaStreamCreateWithFlags(&sCompute, cudaStreamNonBlocking));
-    CUDA_CHECK(cudaStreamCreateWithFlags(&copyStreams,    cudaStreamNonBlocking));
+        float chunk_tmin = tmin + offset * delta;
+        CUDA_CHECK(cudaMemcpyToSymbol(const_tmin, &chunk_tmin, sizeof(chunk_tmin)));
 
-    float* hPinned = nullptr;
-    CUDA_CHECK(cudaHostAlloc(&hPinned, length * sizeof(float), cudaHostAllocPortable));
+        const dim3 block(THREADS_PER_BLOCK);
+        const dim3 grid((currentChunk + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
 
-    dim3 block(THREADS_PER_BLOCK);
-    dim3 grid  = blocksFor(length, THREADS_PER_BLOCK);
+        fourier<<<grid, block, 0, streams[s]>>>(dOut[s]);
+        CUDA_CHECK(cudaGetLastError());
 
-    fourier<<<grid, block, 0, sCompute>>>(dOut);
-    CUDA_CHECK(cudaMemcpyAsync(hPinned, dOut, length*sizeof(float), cudaMemcpyDeviceToHost, copyStreams));
+    }
 
-    CUDA_CHECK(cudaStreamSynchronize(sCompute));
-    CUDA_CHECK(cudaStreamSynchronize(copyStreams));
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        CUDA_CHECK(cudaStreamSynchronize(streams[s]));
+    }
 
-    CUDA_CHECK(cudaFree(dOut));
-    CUDA_CHECK(cudaFreeHost(hPinned));
-    CUDA_CHECK(cudaStreamDestroy(sCompute));
-    CUDA_CHECK(cudaStreamDestroy(copyStreams));
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void runTest()
 {
-    setAllConstants();
 
-    std::vector<float> hResult(length);
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        const int offset = s * chunkSize;
+        const int currentChunk = (offset + chunkSize <= length)
+                                 ? chunkSize : (length - offset);
+        const size_t bytes = (size_t)currentChunk * sizeof(float);
 
-    cudaStream_t sCompute;
-    CUDA_CHECK(cudaStreamCreateWithFlags(&sCompute, cudaStreamNonBlocking));
+        float chunk_tmin = tmin + offset * delta;
+        CUDA_CHECK(cudaMemcpyToSymbol(const_tmin, &chunk_tmin, sizeof(chunk_tmin)));
 
-    cudaStream_t copyStreams[NUM_STREAMS];
-    float* deviceBuffer[NUM_STREAMS] = {nullptr};
-    float* hStage[NUM_STREAMS] = {nullptr};
-    size_t nCount[NUM_STREAMS] = {0};
-    size_t startIdx[NUM_STREAMS] = {0};
-    cudaEvent_t doneEvt[NUM_STREAMS];
+        const dim3 block(THREADS_PER_BLOCK);
+        const dim3 grid((currentChunk + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
 
-    for (int i = 0; i < NUM_STREAMS; ++i) {
-        CUDA_CHECK(cudaStreamCreateWithFlags(&copyStreams[i], cudaStreamNonBlocking));
-        CUDA_CHECK(cudaMalloc(&deviceBuffer[i], CHUNK_BYTES));
-        CUDA_CHECK(cudaHostAlloc(&hStage[i], CHUNK_BYTES, cudaHostAllocDefault));
-        CUDA_CHECK(cudaEventCreateWithFlags(&doneEvt[i], cudaEventDisableTiming));
-    }
-
-    size_t base = 0;
-    size_t chunkIdx = 0;
-
-    while (base < length) {
-        const size_t s = chunkIdx % NUM_STREAMS;
-
-        if (chunkIdx >= NUM_STREAMS) {
-            size_t bytes = nCount[s] * sizeof(float);
-            CUDA_CHECK(cudaStreamWaitEvent(copyStreams[s], doneEvt[s], 0));
-
-            CUDA_CHECK(cudaMemcpyAsync(hStage[s], deviceBuffer[s], bytes,
-                                       cudaMemcpyDeviceToHost, copyStreams[s]));
-            CUDA_CHECK(cudaStreamSynchronize(copyStreams[s]));
-            std::memcpy(&hResult[startIdx[s]], hStage[s], bytes);
-        }
-
-        const size_t nThis = std::min<size_t>(CHUNK_ELEMS, length - base);
-        nCount[s] = nThis;
-        startIdx[s] = base;
-
-        const float tminChunk = tmin + base * delta;
-        CUDA_CHECK(cudaMemcpyToSymbolAsync(const_tmin, &tminChunk, sizeof(tminChunk), 0, cudaMemcpyHostToDevice, sCompute));
-
-        // launch compute for slot s
-        dim3 block(THREADS_PER_BLOCK);
-        dim3 grid  = blocksFor(nThis, THREADS_PER_BLOCK);
-        fourier<<<grid, block, 0, sCompute>>>(deviceBuffer[s]);
+        fourier<<<grid, block, 0, streams[s]>>>(dOut[s]);
         CUDA_CHECK(cudaGetLastError());
 
-        CUDA_CHECK(cudaEventRecord(doneEvt[s], sCompute));
-
-        base += nThis;
-        ++chunkIdx;
+        CUDA_CHECK(cudaMemcpyAsync(
+            hStage[s], dOut[s], bytes, cudaMemcpyDeviceToHost, streams[s]));
     }
 
-    int totalChunks = (length + CHUNK_ELEMS - 1) / CHUNK_ELEMS;
-    int startFlush  = (totalChunks > NUM_STREAMS) ? (totalChunks - NUM_STREAMS) : 0;
-
-    for (int i = startFlush; i < totalChunks; ++i) {
-        const size_t s = i % NUM_STREAMS;
-        size_t bytes = nCount[s] * sizeof(float);
-
-        CUDA_CHECK(cudaStreamWaitEvent(copyStreams[s], doneEvt[s], 0));
-        CUDA_CHECK(cudaMemcpyAsync(hStage[s], deviceBuffer[s], bytes, cudaMemcpyDeviceToHost, copyStreams[s]));
-
-        CUDA_CHECK(cudaStreamSynchronize(copyStreams[s]));
-        std::memcpy(&hResult[startIdx[s]], hStage[s], bytes);
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        CUDA_CHECK(cudaStreamSynchronize(streams[s]));
     }
 
-    for (int i = 0; i < NUM_STREAMS; ++i) {
-        CUDA_CHECK(cudaFree(deviceBuffer[i]));
-        CUDA_CHECK(cudaFreeHost(hStage[i]));
-        CUDA_CHECK(cudaStreamDestroy(copyStreams[i]));
-            CUDA_CHECK(cudaEventDestroy(doneEvt[i]));
-    }
-    CUDA_CHECK(cudaStreamDestroy(sCompute));
 }
 
 int main()
@@ -191,5 +150,12 @@ int main()
                 NUM_REPS,
                 std::chrono::duration<double>(end_reps - start_reps).count());
     std::puts("=========================\n");
+
+    for (int s = 0; s < NUM_STREAMS; ++s) {
+        CUDA_CHECK(cudaFree(dOut[s]));
+        CUDA_CHECK(cudaFreeHost(hStage[s]));
+        CUDA_CHECK(cudaStreamDestroy(streams[s]));
+    }
+
     return 0;
 }

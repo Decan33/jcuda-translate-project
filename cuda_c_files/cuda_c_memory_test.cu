@@ -84,13 +84,22 @@ void version2() {
 	std::cout << "Version 2 CPU time: " << elapsed.count() << "s\n";
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+            std::cout << "Usage: " << argv[0] << " <1|2>\n";
+            return 1;
+        }
 
-    if(NORMAL==memoryTypeUsed) {
-std::cout << "Testing NORMAL memory mode\n";
-        }else {
+    std::string arg = argv[1];
 
-std::cout << "Testing PINNED memory mode\n";
+        if (arg == "1") {
+            std::cout << "Testing NORMAL memory mode\n";
+            memoryTypeUsed = NORMAL;
+        } else if (arg == "2") {
+            std::cout << "Testing PINNED memory mode\n";
+            memoryTypeUsed = PINNED;
+        } else {
+            std::cout << "Invalid option: " << arg << "\n";
         }
 
     for(int i = 0; i < 5; i++) {

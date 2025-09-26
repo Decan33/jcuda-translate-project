@@ -29,8 +29,7 @@ __global__ void fourier(
     results[idx] = T * 0.5f - result_coefficient * sum;
 }
 
-void performColdRun(float tmin, float delta, int length, int coefficients, 
-                   float pi, float pi_over_T, float result_coefficient, float T) {
+void performColdRun() {
     float *d_results;
     cudaMalloc(&d_results, length * sizeof(float));
 
@@ -51,7 +50,7 @@ void performColdRun(float tmin, float delta, int length, int coefficients,
 
 int main() {
     printf("Performing cold run to warm up GPU...\n");
-    performColdRun(tmin, delta, length, coefficients, pi, pi_over_T, result_coefficient, T);
+    performColdRun();
     printf("Cold run completed.\n\n");
 
     std::vector<double> prep_times, kernel_times, copy_times, delete_times;

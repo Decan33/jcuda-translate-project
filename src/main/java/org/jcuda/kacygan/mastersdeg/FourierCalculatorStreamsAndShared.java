@@ -15,8 +15,75 @@ import static jcuda.driver.JCudaDriver.*;
 public class FourierCalculatorStreamsAndShared implements FourierTest {
 
     private static final String PTX_FILENAME = "FourierOptimized.ptx";
+    private static final int CHUNK_SIZE = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
 
-    private static final int    CHUNK_SIZE = (LENGTH + NUM_STREAMS - 1) / NUM_STREAMS;
+    private CUcontext context;
+    private CUstream[] streams;
+    private CUmodule[] modules;
+    private CUfunction[] functions;
+    private CUdeviceptr[] deviceChunks;
+    private Pointer[] hostChunkPointers;
+    private FloatBuffer[] hostBuffers;
+    private int[] chunkSizes;
+    private boolean resourcesInitialized = false;
+
+    private void initializeResources() {
+        if (resourcesInitialized) return;
+
+        context = initJCuda();
+
+        streams = new CUstream[NUM_STREAMS];
+        modules = new CUmodule[NUM_STREAMS];
+        functions = new CUfunction[NUM_STREAMS];
+        deviceChunks = new CUdeviceptr[NUM_STREAMS];
+        hostChunkPointers = new Pointer[NUM_STREAMS];
+        hostBuffers = new FloatBuffer[NUM_STREAMS];
+        chunkSizes = new int[NUM_STREAMS];
+
+        for (int i = 0; i < NUM_STREAMS; i++) {
+            streams[i] = new CUstream();
+            cuStreamCreate(streams[i], 0);
+
+            modules[i] = new CUmodule();
+            cuModuleLoad(modules[i], PTX_FILENAME);
+
+            functions[i] = new CUfunction();
+            cuModuleGetFunction(functions[i], modules[i], FUNCTION_NAME);
+
+            int startIdx = i * CHUNK_SIZE;
+            int endIdx = Math.min(startIdx + CHUNK_SIZE, LENGTH);
+            int currentChunkSize = Math.max(0, endIdx - startIdx);
+            chunkSizes[i] = currentChunkSize;
+
+            if (currentChunkSize > 0) {
+                deviceChunks[i] = new CUdeviceptr();
+                cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
+
+                hostChunkPointers[i] = new Pointer();
+                cuMemHostAlloc(hostChunkPointers[i], (long) currentChunkSize * Sizeof.FLOAT,
+                        JCudaDriver.CU_MEMHOSTALLOC_PORTABLE);
+                ByteBuffer bb = hostChunkPointers[i].getByteBuffer(0, (long) currentChunkSize * Sizeof.FLOAT)
+                        .order(ByteOrder.nativeOrder());
+                hostBuffers[i] = bb.asFloatBuffer();
+            }
+        }
+
+        resourcesInitialized = true;
+    }
+
+    private void cleanupResources() {
+        if (!resourcesInitialized) return;
+
+        for (int i = 0; i < NUM_STREAMS; i++) {
+            if (deviceChunks[i] != null) cuMemFree(deviceChunks[i]);
+            if (hostChunkPointers[i] != null) cuMemFreeHost(hostChunkPointers[i]);
+            if (streams[i] != null) cuStreamDestroy(streams[i]);
+            if (modules[i] != null) cuModuleUnload(modules[i]);
+        }
+
+        if (context != null) cuCtxDestroy(context);
+        resourcesInitialized = false;
+    }
 
     @Override
     public void runTest() {
@@ -26,92 +93,52 @@ public class FourierCalculatorStreamsAndShared implements FourierTest {
         performColdRun();
         System.out.println("Cold run completed.\n");
 
-        CUcontext context = initJCuda();
+        initializeResources();
 
         long startWholeTime = System.nanoTime();
         for (int rep = 0; rep < NUM_REPS; rep++) {
-
-            CUstream[]     streams       = new CUstream[NUM_STREAMS];
-            CUmodule[]     modules       = new CUmodule[NUM_STREAMS];
-            CUfunction[]   functions     = new CUfunction[NUM_STREAMS];
-            CUdeviceptr[]  deviceChunks  = new CUdeviceptr[NUM_STREAMS];
-            Pointer[]      hostChunkPtrs = new Pointer[NUM_STREAMS];
-            FloatBuffer[]  hostBuffers   = new FloatBuffer[NUM_STREAMS];
-            int[]          chunkSizes    = new int[NUM_STREAMS];
-
-            prepareDataAndAllocateMemory(streams, modules, functions, deviceChunks, hostChunkPtrs, hostBuffers, chunkSizes);
-
-            for (int i = 0; i < NUM_STREAMS; i++) {
-                int currentChunkSize = chunkSizes[i];
-                if (currentChunkSize == 0) continue;
-
-                int startIdx = i * CHUNK_SIZE;
-
-                float tminForChunk = TMIN + startIdx * DELTA;
-
-                setAllConstants(modules[i], tminForChunk, streams[i], COEFFICIENTS);
-
-                Pointer kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
-
-                int blocks = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-
-                cuLaunchKernel(functions[i],
-                        blocks, 1, 1,
-                        THREADS_PER_BLOCK, 1, 1,
-                        0,
-                        streams[i],
-                        kernelParams, null);
-
-                cuMemcpyDtoHAsync(hostChunkPtrs[i], deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
-            }
-
-            for (CUstream stream : streams) {
-                cuStreamSynchronize(stream);
-            }
-
-            for (int i = 0; i < NUM_STREAMS; i++) {
-                if (deviceChunks[i] != null)  cuMemFree(deviceChunks[i]);
-                if (hostChunkPtrs[i] != null) cuMemFreeHost(hostChunkPtrs[i]);
-                if (streams[i] != null)       cuStreamDestroy(streams[i]);
-                if (modules[i] != null)       cuModuleUnload(modules[i]);
-            }
+            runSingleTest();
         }
-
         long endWholeTime = System.nanoTime();
+
         double wholeTimeSec = (endWholeTime - startWholeTime) / 1e9;
 
         System.out.println("\n=========================");
         System.out.printf("Whole time taken for %d reps: %.6f s%n", NUM_REPS, wholeTimeSec);
         System.out.println("=========================");
 
-        cuCtxDestroy(context);
+        cleanupResources();
     }
 
-    private static void prepareDataAndAllocateMemory(CUstream[] streams, CUmodule[] modules, CUfunction[] functions, CUdeviceptr[] deviceChunks, Pointer[] hostChunkPtrs, FloatBuffer[] hostBuffers, int[] chunkSizes) {
+    private void runSingleTest() {
         for (int i = 0; i < NUM_STREAMS; i++) {
-            streams[i] = new CUstream();
-            cuStreamCreate(streams[i], 0);
-
-            modules[i] = new CUmodule();
-            cuModuleLoad(modules[i], PTX_FILENAME);
-
-            functions[i] = new CUfunction();
-            cuModuleGetFunction(functions[i], modules[i], "fourier");
+            int currentChunkSize = chunkSizes[i];
+            if (currentChunkSize == 0) continue;
 
             int startIdx = i * CHUNK_SIZE;
-            int endIdx = Math.min(startIdx + CHUNK_SIZE, LENGTH);
-            int currentChunkSize = Math.max(0, endIdx - startIdx);
-            chunkSizes[i] = currentChunkSize;
+            float tminForChunk = TMIN + startIdx * DELTA;
 
-            deviceChunks[i] = new CUdeviceptr();
-            cuMemAlloc(deviceChunks[i], (long) currentChunkSize * Sizeof.FLOAT);
+            setAllConstants(modules[i], tminForChunk, streams[i], COEFFICIENTS);
 
-            hostChunkPtrs[i] = new Pointer();
-            cuMemHostAlloc(hostChunkPtrs[i], (long) currentChunkSize * Sizeof.FLOAT, JCudaDriver.CU_MEMHOSTALLOC_PORTABLE);
-            ByteBuffer bb = hostChunkPtrs[i].getByteBuffer(0, (long) currentChunkSize * Sizeof.FLOAT).order(ByteOrder.nativeOrder());
-            hostBuffers[i] = bb.asFloatBuffer();
+            Pointer kernelParams = Pointer.to(Pointer.to(deviceChunks[i]));
+            int blocks = (currentChunkSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+            cuLaunchKernel(functions[i],
+                    blocks, 1, 1,
+                    THREADS_PER_BLOCK, 1, 1,
+                    0,
+                    streams[i],
+                    kernelParams, null);
+
+            cuMemcpyDtoHAsync(hostChunkPointers[i], deviceChunks[i],
+                    (long) currentChunkSize * Sizeof.FLOAT, streams[i]);
+        }
+
+        for (CUstream stream : streams) {
+            cuStreamSynchronize(stream);
         }
     }
+
 
     private static void setAllConstants(CUmodule modules, float tminForChunk, CUstream streams, int coefficients) {
         setConstant(modules, "const_tmin", Pointer.to(new float[]{tminForChunk}), Sizeof.FLOAT, streams);
