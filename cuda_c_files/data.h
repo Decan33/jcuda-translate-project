@@ -5,6 +5,7 @@
 
 constexpr int NUM_REPS = 20;
 constexpr int THREADS_PER_BLOCK = 256;
+constexpr int BLOCKS_PER_GRID = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 constexpr int MAX_COEFFICIENTS = 1024;
 constexpr float tmin = -3.0f;
 constexpr float tmax = 3.0f;
