@@ -13,10 +13,11 @@ import static jcuda.runtime.cudaMemcpyKind.*;
 public class JCudaMemoryTest implements FourierTest {
 
     static final long SIZE = 1L * 1024 * 1024 * 1024;
-    static final Integer THREADS_PER_BLOCK  = 256;
     public static final int BLOCKS = (int) ((SIZE + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
-    static final int N = 10;
-    static final int REPS = 10;
+    private double kernelSum = 0.0;
+    private double hostToDeviceTransferSum = 0.0;
+    private double deviceToHostTransferSum = 0.0;
+
     MemoryType memoryTypeUsed;
     private static CUmodule module = new CUmodule();
     private static CUfunction function = new CUfunction();
@@ -67,29 +68,46 @@ public class JCudaMemoryTest implements FourierTest {
 
         cudaMalloc(dPtr, SIZE);
 
-        var startCPU = System.nanoTime();
+        var start = System.nanoTime();
 
         doFirstVersionCopies(hPtr, dPtr);
 
-        var stopCPU = System.nanoTime();
+        var end = System.nanoTime();
 
         cudaFree(dPtr);
         if (MemoryType.PINNED.equals(memoryTypeUsed)) {
             cudaFreeHost(hPtr);
         }
 
-        System.out.printf("Version 1 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
+
+        System.out.printf("[Kernel] sum: %.3f s, avg: %.3f s\n", kernelSum, kernelSum / REPS);
+        System.out.printf("[H->D] sum: %.3f s, avg %.3f s\n", hostToDeviceTransferSum, hostToDeviceTransferSum / REPS);
+        System.out.printf("[D->H] sum: %.3f s, avg %.3f s\n", deviceToHostTransferSum, deviceToHostTransferSum / REPS);
+        System.out.printf("Version 1 CPU time: %.3f s\n", toSeconds(end, start));
+        clearTimings();
     }
 
     private void doFirstVersionCopies(Pointer hPointer, Pointer deviceData) {
         for (int rep = 0; rep < REPS; rep++) {
 
+            var firstTransferStart = System.nanoTime();
             cudaMemcpy(deviceData, hPointer, SIZE, cudaMemcpyHostToDevice);
+            var firstTransferEnd = System.nanoTime();
+
+
+            var kernelStart = System.nanoTime();
             for (int i = 0; i < N; i++) {
                 launchAddOneKernel(deviceData);
             }
-            cudaMemcpy(hPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
+            var kernelEnd = System.nanoTime();
 
+            var secondTransferStart = System.nanoTime();
+            cudaMemcpy(hPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
+            var secondTransferEnd = System.nanoTime();
+
+            kernelSum += toSeconds(kernelEnd, kernelStart);
+            hostToDeviceTransferSum += toSeconds(firstTransferEnd, firstTransferStart);
+            deviceToHostTransferSum += toSeconds(secondTransferEnd, secondTransferStart);
         }
     }
 
@@ -121,17 +139,34 @@ public class JCudaMemoryTest implements FourierTest {
             cudaFreeHost(hPtr);
         }
 
-        System.out.printf("Version 2 CPU time: %.3f s\n", (stopCPU - startCPU) / 1e9);
+        System.out.printf("[Kernel] sum: %.3f s, avg: %.3f s\n", kernelSum, kernelSum / REPS);
+        System.out.printf("[H->D] sum: %.3f s, avg %.3f s\n", hostToDeviceTransferSum, hostToDeviceTransferSum / REPS * N);
+        System.out.printf("[D->H] sum: %.3f s, avg %.3f s\n", deviceToHostTransferSum, deviceToHostTransferSum / REPS * N);
+        System.out.printf("Version 2 CPU time: %.3f s\n", toSeconds(stopCPU, startCPU));
+        clearTimings();
     }
 
     private void doSecondVersionCopies(Pointer hostPointer, Pointer deviceData) {
         for (int rep = 0; rep < REPS; rep++) {
-            for (int i = 0; i < N; i++) {
-                cudaMemcpy(deviceData, hostPointer, SIZE, cudaMemcpyHostToDevice);
-                launchAddOneKernel(deviceData);
-                cudaMemcpy(hostPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
-            }
 
+            var kernelStart = System.nanoTime();
+            for (int i = 0; i < N; i++) {
+                var firstTransferStart = System.nanoTime();
+                cudaMemcpy(deviceData, hostPointer, SIZE, cudaMemcpyHostToDevice);
+                var firstTransferEnd = System.nanoTime();
+
+                launchAddOneKernel(deviceData);
+
+                var secondTransferStart = System.nanoTime();
+                cudaMemcpy(hostPointer, deviceData, SIZE, cudaMemcpyDeviceToHost);
+                var secondTransferEnd = System.nanoTime();
+
+                hostToDeviceTransferSum += toSeconds(firstTransferEnd, firstTransferStart);
+                deviceToHostTransferSum += toSeconds(secondTransferEnd, secondTransferStart);
+            }
+            var kernelEnd = System.nanoTime();
+
+            kernelSum += toSeconds(kernelEnd, kernelStart);
         }
     }
 
@@ -148,6 +183,16 @@ public class JCudaMemoryTest implements FourierTest {
                 kernelParams, null);
 
         cuCtxSynchronize();
+    }
+
+    void clearTimings() {
+        kernelSum = 0.0;
+        hostToDeviceTransferSum = 0.0;
+        deviceToHostTransferSum = 0.0;
+    }
+
+    double toSeconds(long end, long start) {
+        return (end - start) / 1e9;
     }
 }
 

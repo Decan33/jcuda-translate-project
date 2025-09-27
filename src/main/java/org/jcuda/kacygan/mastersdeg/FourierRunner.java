@@ -7,13 +7,13 @@ public class FourierRunner {
     public static void main(String[] args) {
         System.out.println("Running Fourier tests with cold runs");
         var tests = List.of(
-                new FourierCalculatorRaw(),
+//                new FourierCalculatorRaw(),
 //                new FourierCalculatorOptimized(),
 //                new FourierCalculatorPinned(),
-                new FourierCalculatorStreams(),
-                new FourierCalculatorStreamsAndShared()
-//                new JCudaMemoryTest(MemoryType.NORMAL),
-//                new JCudaMemoryTest(MemoryType.PINNED)
+//                new FourierCalculatorStreams(),
+//                new FourierCalculatorStreamsAndShared()
+                new JCudaMemoryTest(MemoryType.NORMAL),
+                new JCudaMemoryTest(MemoryType.PINNED)
         );
 
         for (var test : tests) {

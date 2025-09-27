@@ -126,8 +126,8 @@ void version2() {
 	std::chrono::duration<double> elapsed = end - start;
 
 	std::printf("Kernel sum: %.3f s, kernel avg: %.3f s\n", kernel_sum, kernel_sum / REPS);
-    std::printf("H->D sum: %.3f s, H->D avg: %.3f s\n", host_to_device_transfer_sum, host_to_device_transfer_sum / REPS);
-    std::printf("D->H sum: %.3f s, D->H avg: %.3f s\n", device_to_host_transfer_sum, device_to_host_transfer_sum / REPS);
+    std::printf("H->D sum: %.3f s, H->D avg: %.3f s\n", host_to_device_transfer_sum, host_to_device_transfer_sum / REPS * N);
+    std::printf("D->H sum: %.3f s, D->H avg: %.3f s\n", device_to_host_transfer_sum, device_to_host_transfer_sum / REPS * N);
 	std::cout << "Version 2 CPU time: " << elapsed.count() << "s\n";
 	clear_timing();
 }

@@ -2,7 +2,6 @@ package org.jcuda.kacygan.mastersdeg;
 
 public interface FourierTest {
     String FUNCTION_NAME = "fourier";
-    int NUM_REPS = 20;
     int LENGTH = 1_000_000_000;
     int COEFFICIENTS = 1024;
     float TMIN = -3.0f;
@@ -18,7 +17,9 @@ public interface FourierTest {
     int NUM_STREAMS = 4;
     boolean logReps = false;
 
-    int CHUNK_SIZE = LENGTH / NUM_STREAMS;
+    int N = 10;
+    int REPS = 10;
+    int NUM_REPS = 20;
 
     void runTest();
 }
