@@ -70,7 +70,7 @@ void initializeMemory() {
     const size_t chunkBytes = (size_t)chunkSize * sizeof(float);
 
     for (int s = 0; s < NUM_STREAMS; ++s) {
-        CUDA_CHECK(cudaStreamCreateWithFlags(&streams[s], cudaStreamNonBlocking));
+        CUDA_CHECK(cudaStreamCreate(&streams[s]));
         CUDA_CHECK(cudaMalloc(&dOut[s], chunkBytes));
         CUDA_CHECK(cudaHostAlloc(&hStage[s], chunkBytes, cudaHostAllocDefault));
     }

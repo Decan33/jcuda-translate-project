@@ -47,7 +47,7 @@ void initializeMemory() {
     chunkSize = (length + NUM_STREAMS - 1) / NUM_STREAMS;
 
     for (int i = 0; i < NUM_STREAMS; ++i) {
-        CUDA_CHECK(cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking));
+        CUDA_CHECK(cudaStreamCreate(&streams[i]));
         CUDA_CHECK(cudaMalloc(&d_results[i], (size_t)chunkSize * sizeof(float)));
         CUDA_CHECK(cudaHostAlloc(&h_results[i], (size_t)chunkSize * sizeof(float), cudaHostAllocDefault));
     }
