@@ -113,7 +113,6 @@ int main() {
            NUM_REPS, std::chrono::duration<double>(end_reps - start_reps).count());
     printf("=========================\n\n");
 
-    // FIX 6: Cleanup at the very end
     for (int i = 0; i < NUM_STREAMS; ++i) {
         CUDA_CHECK(cudaFree(d_results[i]));
         CUDA_CHECK(cudaFreeHost(h_results[i]));
